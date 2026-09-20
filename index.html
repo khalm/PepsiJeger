@@ -12,7 +12,7 @@
     .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
     button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
     button:active { background: #0066cc; }
-    input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
     ul { list-style: none; padding: 0; margin: 0; }
     li { background: #2a2a2a; padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
@@ -50,10 +50,10 @@
   <!-- Områder / Postnummer -->
   <div class="card">
     <h3>📍 Mine Områder / Postnummer</h3>
-    <p class="status-text">Skriv postnr eller sted – feltet fullfører automatisk via Kartverket:</p>
+    <p class="status-text">Fylles ut automatisk mens du taster:</p>
     <div style="display: flex; gap: 8px;">
-      <input type="text" id="postal-input" placeholder="Postnr (f.eks. 6060)" style="flex: 1;" onblur="finnStedFraPostnr()" oninput="sjekkPostnrInput(this.value)">
-      <input type="text" id="place-input" placeholder="Sted (f.eks. Hareid)" style="flex: 1.5;" onblur="finnPostnrFraSted()">
+      <input type="text" id="postal-input" placeholder="Postnr (f.eks. 6060)" style="flex: 1;" oninput="liveOppslagPostnr(this.value)">
+      <input type="text" id="place-input" placeholder="Sted (f.eks. Hareid)" style="flex: 1.5;" oninput="liveOppslagSted(this.value)">
     </div>
     <button type="button" onclick="leggTilOmraade()">Legg til postnummer</button>
     <ul id="location-list" style="margin-top: 12px;"></ul>
@@ -106,45 +106,47 @@
       return tekst ? JSON.parse(tekst) : null;
     }
 
-    // --- Kartverket Automatisk Oppslag ---
-    function sjekkPostnrInput(verdi) {
-      if (verdi.trim().length === 4) {
-        finnStedFraPostnr();
-      }
-    }
+    // --- Umiddelbart Live Oppslag via Kartverket ---
+    let debounceTimerSted = null;
 
-    async function finnStedFraPostnr() {
-      const postnr = document.getElementById('postal-input').value.trim();
+    async function liveOppslagPostnr(verdi) {
+      const postnr = verdi.trim();
       const stedFelt = document.getElementById('place-input');
-      if (postnr.length !== 4) return;
 
-      try {
-        const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(postnr)}&treffPerSide=1`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.adresser && data.adresser.length > 0) {
-          stedFelt.value = data.adresser[0].poststed;
+      // Så fort det er 4 siffer, hent stedsnavn med en gang
+      if (postnr.length === 4 && /^\d{4}$/.test(postnr)) {
+        try {
+          const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(postnr)}&treffPerSide=1`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.adresser && data.adresser.length > 0) {
+            stedFelt.value = data.adresser[0].poststed;
+          }
+        } catch (e) {
+          console.warn("Feil ved live-postnr oppslag:", e);
         }
-      } catch (e) {
-        console.warn("Kunne ikke slå opp poststed:", e);
       }
     }
 
-    async function finnPostnrFraSted() {
-      const sted = document.getElementById('place-input').value.trim();
+    function liveOppslagSted(verdi) {
+      clearTimeout(debounceTimerSted);
+      const sted = verdi.trim();
       const postnrFelt = document.getElementById('postal-input');
-      if (!sted || postnrFelt.value.trim().length === 4) return;
 
-      try {
-        const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(sted)}&treffPerSide=1`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.adresser && data.adresser.length > 0) {
-          postnrFelt.value = data.adresser[0].postnummer;
-          stedFelt.value = data.adresser[0].poststed;
-        }
-      } catch (e) {
-        console.warn("Kunne ikke slå opp postnummer:", e);
+      // Vent 250 ms etter siste tastetrykk så vi ikke spammer API-et mens du skriver
+      if (sted.length >= 3) {
+        debounceTimerSted = setTimeout(async () => {
+          try {
+            const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(sted)}&treffPerSide=1`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.adresser && data.adresser.length > 0) {
+              postnrFelt.value = data.adresser[0].postnummer;
+            }
+          } catch (e) {
+            console.warn("Feil ved live-stedsnavn oppslag:", e);
+          }
+        }, 250);
       }
     }
 
