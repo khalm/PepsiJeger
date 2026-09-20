@@ -12,20 +12,23 @@
     .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
     button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
     button:active { background: #0066cc; }
-    input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
-    .slider-box { margin-top: 14px; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
     ul { list-style: none; padding: 0; margin: 0; }
-    li { background: #2a2a2a; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    li { background: #2a2a2a; padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
     .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
     #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
     
-    /* Tilbudskort */
     .deal-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding: 12px 0; }
     .deal-item:last-child { border-bottom: none; }
     .deal-title { font-weight: bold; font-size: 15px; color: #fff; }
     .deal-store { font-size: 12px; color: #888; margin-top: 3px; }
     .deal-price { font-size: 18px; font-weight: bold; color: #4ade80; text-align: right; }
+
+    /* Butikkliste med checkboxes */
+    .chains-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .chain-label { display: flex; align-items: center; background: #2a2a2a; padding: 8px 12px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    .chain-label input { margin-right: 8px; width: 18px; height: 18px; }
   </style>
 </head>
 <body>
@@ -45,29 +48,30 @@
     </div>
   </div>
 
-  <!-- Posisjon & Rekkevidde -->
+  <!-- Områder / Postnummer -->
   <div class="card">
-    <h3>📍 Din Posisjon & Rekkevidde</h3>
-    <p id="pos-status" class="status-text">Posisjon ikke hentet</p>
-    <button type="button" onclick="hentOgLagrePosisjon()">Hent & Lagre min posisjon</button>
-    
-    <div class="slider-box">
-      <label>Varslingsradius: <strong id="radius-val">5</strong> km</label>
-      <input type="range" id="radius" min="1" max="30" value="5" style="width:100%" oninput="document.getElementById('radius-val').innerText = this.value">
+    <h3>📍 Mine Områder / Postnummer</h3>
+    <div style="display: flex; gap: 8px;">
+      <input type="text" id="postal-input" placeholder="Postnr (f.eks. 6060)" style="flex: 1;">
+      <input type="text" id="place-input" placeholder="Sted (f.eks. Hareid)" style="flex: 1.5;">
     </div>
+    <button type="button" onclick="leggTilOmraade()">Legg til postnummer</button>
+    <ul id="location-list" style="margin-top: 12px;"></ul>
   </div>
 
-  <!-- Legg til vare -->
+  <!-- Butikker / Kjeder -->
   <div class="card">
-    <h3>🛒 Hva skal vi jakte på?</h3>
-    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Grandiosa...">
-    <button type="button" onclick="leggTilVare()">Legg til i overvåking</button>
+    <h3>🏪 Velg Butikker & Kjeder</h3>
+    <p class="status-text">Huk av kjedene du vil motta tilbud fra:</p>
+    <div id="chains-list" class="chains-grid"></div>
   </div>
 
   <!-- Overvåkningsliste -->
   <div class="card">
-    <h3>🎯 Overvåker nå:</h3>
-    <ul id="item-list"></ul>
+    <h3>🛒 Hva skal vi jakte på?</h3>
+    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Grandiosa, Ost...">
+    <button type="button" onclick="leggTilVare()">Legg til i overvåking</button>
+    <ul id="item-list" style="margin-top: 14px;"></ul>
   </div>
 
   <script>
@@ -83,7 +87,6 @@
     function skjulFeil() {
       const boks = document.getElementById('err-msg');
       boks.style.display = 'none';
-      boks.innerText = '';
     }
 
     async function apiKall(sti, options = {}) {
@@ -109,7 +112,6 @@
       skjulFeil();
 
       try {
-        // Henter tilbud med butikk-kobling hvis tilgjengelig, ellers faller vi tilbake på vanlige tilbud
         let tilbud;
         try {
           tilbud = await apiKall('deals?select=*,stores(name)&order=id.desc', { prefer: 'return=representation' });
@@ -118,14 +120,14 @@
         }
         
         if (!tilbud || tilbud.length === 0) {
-          container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet i databasen ennå.</p>';
+          container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet for dine valgte kriterier.</p>';
           return;
         }
 
         container.innerHTML = "";
         tilbud.forEach(d => {
           const navn = d.product_name || d.name || "Vare";
-          const butikk = d.stores?.name || d.store_name || "Butikk i nærheten";
+          const butikk = d.stores?.name || d.store_name || "Butikk";
           const pris = (d.price !== undefined && d.price !== null) ? `${d.price} kr` : "Tilbud";
           
           container.innerHTML += `
@@ -144,48 +146,86 @@
       }
     }
 
-    function hentOgLagrePosisjon() {
-      skjulFeil();
-      const status = document.getElementById('pos-status');
-      status.innerText = "Henter GPS-posisjon...";
-
-      if (!navigator.geolocation) {
-        visFeil("Geolokasjon støttes ikke av denne nettleseren.");
-        return;
+    // --- Postnummer / Steder ---
+    async function lastOmraader() {
+      try {
+        const omraader = await apiKall('user_locations?select=*&order=created_at.asc', { prefer: 'return=representation' });
+        const liste = document.getElementById('location-list');
+        liste.innerHTML = "";
+        (omraader || []).forEach(o => {
+          liste.innerHTML += `
+            <li>
+              <span>📮 <strong>${o.postal_code}</strong> ${o.place_name ? `(${o.place_name})` : ''}</span>
+              <button class="del-btn" onclick="slettOmraade('${o.id}')">Slett</button>
+            </li>
+          `;
+        });
+      } catch (e) {
+        visFeil("Kunne ikke laste områder: " + e.message);
       }
-
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const rad = parseInt(document.getElementById('radius').value, 10);
-          status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)}). Lagrer...`;
-
-          try {
-            await apiKall('user_profiles', {
-              method: 'POST',
-              prefer: 'resolution=merge-duplicates',
-              body: JSON.stringify({
-                id: 'standard_bruker',
-                latitude: lat,
-                longitude: lng,
-                radius_km: rad,
-                location: `POINT(${lng} ${lat})`
-              })
-            });
-            status.innerText = `Posisjon lagret! (${lat.toFixed(4)}, ${lng.toFixed(4)}) - ${rad} km`;
-          } catch (e) {
-            status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-            visFeil("Kunne ikke lagre profil til Supabase: " + e.message);
-          }
-        },
-        (err) => {
-          visFeil("GPS-feil: " + err.message);
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
     }
 
+    async function leggTilOmraade() {
+      skjulFeil();
+      const pFelt = document.getElementById('postal-input');
+      const sFelt = document.getElementById('place-input');
+      const postnr = pFelt.value.trim();
+      const sted = sFelt.value.trim();
+      if (!postnr) return;
+
+      try {
+        await apiKall('user_locations', {
+          method: 'POST',
+          body: JSON.stringify({ postal_code: postnr, place_name: sted })
+        });
+        pFelt.value = "";
+        sFelt.value = "";
+        lastOmraader();
+      } catch (e) {
+        visFeil("Kunne ikke lagre område: " + e.message);
+      }
+    }
+
+    async function slettOmraade(id) {
+      try {
+        await apiKall(`user_locations?id=eq.${id}`, { method: 'DELETE' });
+        lastOmraader();
+      } catch (e) {
+        visFeil("Kunne ikke slette område: " + e.message);
+      }
+    }
+
+    // --- Butikker / Kjeder ---
+    async function lastKjeder() {
+      try {
+        const kjeder = await apiKall('selected_chains?select=*&order=chain_name.asc', { prefer: 'return=representation' });
+        const boks = document.getElementById('chains-list');
+        boks.innerHTML = "";
+        (kjeder || []).forEach(k => {
+          boks.innerHTML += `
+            <label class="chain-label">
+              <input type="checkbox" ${k.is_selected ? 'checked' : ''} onchange="endreKjede('${k.chain_name}', this.checked)">
+              ${k.chain_name}
+            </label>
+          `;
+        });
+      } catch (e) {
+        visFeil("Kunne ikke hente butikkjeder: " + e.message);
+      }
+    }
+
+    async function endreKjede(chainName, status) {
+      try {
+        await apiKall(`selected_chains?chain_name=eq.${encodeURIComponent(chainName)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ is_selected: status })
+        });
+      } catch (e) {
+        visFeil("Kunne ikke oppdatere butikkvalg: " + e.message);
+      }
+    }
+
+    // --- Overvåkede varer ---
     async function lastVarer() {
       try {
         const varer = await apiKall('watched_items?select=*&order=id.asc', { prefer: 'return=representation' });
@@ -223,7 +263,6 @@
     }
 
     async function slettVare(id) {
-      skjulFeil();
       try {
         await apiKall(`watched_items?id=eq.${id}`, { method: 'DELETE' });
         lastVarer();
@@ -233,8 +272,10 @@
     }
 
     // Oppstart
-    lastVarer();
     lastTilbud();
+    lastOmraader();
+    lastKjeder();
+    lastVarer();
   </script>
 </body>
 </html>
