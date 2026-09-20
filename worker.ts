@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Renser URL for /rest/v1, skråstreker og anførselstegn
 const rawUrl = process.env.SUPABASE_URL || 'https://kxyahkeooiyalrnknlhd.supabase.co';
 const supabaseUrl = rawUrl
   .replace(/['"\r\n\t ]/g, '')
@@ -93,7 +92,8 @@ async function syncDeals() {
           .from('stores')
           .insert({ 
             name: storeName, 
-            chain: storeName 
+            chain: storeName,
+            location: 'POINT(0 0)'
           })
           .select('id')
           .single();
