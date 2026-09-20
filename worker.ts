@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Fjerner /rest/v1, skråstreker og ekstra tegn hvis det ligger i hemmeligheten
 const rawUrl = process.env.SUPABASE_URL || 'https://kxyahkeooiyalrnknlhd.supabase.co';
 const supabaseUrl = rawUrl
   .replace(/['"\r\n\t ]/g, '')
@@ -14,8 +13,6 @@ if (!supabaseKey) {
   console.error("Mangler SUPABASE_SERVICE_ROLE_KEY!");
   process.exit(1);
 }
-
-console.log(`Kobler til Supabase URL: ${supabaseUrl}`);
 
 const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false }
@@ -33,15 +30,9 @@ interface KassalProduct {
 async function syncDeals() {
   console.log("Sjekker overvåkede varer i databasen...");
 
-  const { data: watched, error: watchedErr } = await supabase
+  const { data: watched } = await supabase
     .from('watched_items')
     .select('query');
-
-  if (watchedErr) {
-    console.error("Feil ved lesing av watched_items:", watchedErr.message);
-  } else {
-    console.log("watched_items lest OK!");
-  }
 
   const queries = (watched && watched.length > 0)
     ? [...new Set(watched.map(w => w.query.trim().toLowerCase()))]
@@ -75,45 +66,33 @@ async function syncDeals() {
       const actualPrice = item.current_price ?? item.price ?? 0;
 
       let storeId: string | null = null;
-      const { data: existingStore, error: findStoreErr } = await supabase
+      const { data: existingStore } = await supabase
         .from('stores')
         .select('id')
         .ilike('name', `%${storeName}%`)
         .limit(1)
         .maybeSingle();
 
-      if (findStoreErr) {
-        console.error(`Feil ved søk etter butikk "${storeName}":`, findStoreErr.message);
-      }
-
       if (existingStore) {
         storeId = existingStore.id;
       } else {
-        const { data: newStore, error: storeErr } = await supabase
+        const { data: newStore } = await supabase
           .from('stores')
-          .insert({ name: storeName })
+          .insert({ name: storeName, chain: storeName })
           .select('id')
           .single();
 
-        if (storeErr) {
-          console.error(`Feil ved opprettelse av butikk "${storeName}":`, storeErr.message);
-        } else if (newStore) {
-          storeId = newStore.id;
-        }
+        if (newStore) storeId = newStore.id;
       }
 
-      const { error: dealErr } = await supabase.from('deals').insert({
+      await supabase.from('deals').insert({
         store_id: storeId,
         product_name: item.name,
         price: actualPrice,
         valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       });
 
-      if (dealErr) {
-        console.error(`DATABASEFEIL ved lagring av "${item.name}":`, dealErr.message);
-      } else {
-        console.log(`Vellykket lagring: ${item.name} (${actualPrice} kr) - ${storeName}`);
-      }
+      console.log(`Lagret tilbud: ${item.name} (${actualPrice} kr) - ${storeName}`);
     }
   }
 }
