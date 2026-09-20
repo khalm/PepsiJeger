@@ -4,11 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PepsiJeger 🎯</title>
+  <link rel="manifest" href="manifest.json">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(err => console.log('SW feil:', err));
+    }
+  </script>
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #121212; color: #fff; margin: 0; padding: 20px; }
-    h1 { color: #0085ff; display: flex; align-items: center; gap: 8px; margin-top: 0; }
+    h1 { color: #0085ff; margin-top: 0; }
     .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
     button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
     button:active { background: #0066cc; }
@@ -17,24 +23,22 @@
     ul { list-style: none; padding: 0; margin: 0; }
     li { background: #2a2a2a; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 12px; }
-    .badge { font-size: 12px; color: #aaa; margin-top: 4px; }
+    .badge { font-size: 13px; color: #aaa; margin: 8px 0; }
+    #debug-box { display: none; background: #ffebee; color: #b71c1c; border: 1px solid #ef5350; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 13px; margin-bottom: 16px; white-space: pre-wrap; word-break: break-all; }
   </style>
-  <link rel="manifest" href="manifest.json">
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
-    }
-  </script>
 </head>
 <body>
 
   <h1>PepsiJeger 🎯</h1>
 
+  <!-- Viser feilmeldinger rett på mobilskjermen hvis noe stopper opp -->
+  <div id="debug-box"></div>
+
   <!-- Posisjon -->
   <div class="card">
     <h3>📍 Din Posisjon & Rekkevidde</h3>
     <p id="pos-status" class="badge">Posisjon ikke hentet</p>
-    <button onclick="getLocation()">Hent min posisjon</button>
+    <button type="button" onclick="getLocation()">Hent min posisjon</button>
     
     <div class="slider-box">
       <label>Varslingsradius: <strong id="radius-val">5</strong> km</label>
@@ -46,7 +50,7 @@
   <div class="card">
     <h3>🛒 Hva skal vi jakte på?</h3>
     <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Grandiosa...">
-    <button onclick="addItem()">Legg til i overvåking</button>
+    <button type="button" onclick="addItem()">Legg til i overvåking</button>
   </div>
 
   <!-- Liste -->
@@ -56,10 +60,27 @@
   </div>
 
   <script>
+    function showError(err) {
+      const box = document.getElementById('debug-box');
+      box.style.display = 'block';
+      box.innerText = 'Feil: ' + (err.message || err);
+      console.error(err);
+    }
+
+    window.onerror = function(msg, url, line) {
+      showError(msg + ' (Linje ' + line + ')');
+    };
+
     // Supabase config
-    const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co/rest/v1/";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co";
+    const SUPABASE_ANON_KEY = "LIM_INN_DIN_ANON_KEY_HER";
+
+    let supabase;
+    try {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (e) {
+      showError("Klarte ikke starte Supabase. Sjekk anon key.");
+    }
 
     let userLat = null;
     let userLng = null;
@@ -67,30 +88,32 @@
     function getLocation() {
       const status = document.getElementById('pos-status');
       status.innerText = "Henter posisjon...";
+
       if (!navigator.geolocation) {
-        status.innerText = "Geolokasjon støttes ikke av nettleseren.";
+        status.innerText = "Geolokasjon støttes ikke i denne nettleseren.";
         return;
       }
+
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           userLat = pos.coords.latitude;
           userLng = pos.coords.longitude;
           status.innerText = `Posisjon satt (${userLat.toFixed(2)}, ${userLng.toFixed(2)})`;
-          saveProfile();
         },
-        () => { status.innerText = "Kunne ikke hente posisjon. Sjekk tillatelser."; }
+        (err) => {
+          status.innerText = "Feil: " + err.message + ". Gi nettleseren tillatelse til posisjon.";
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
       );
     }
 
-    async function saveProfile() {
-      if (!userLat || !userLng) return;
-      const radius = document.getElementById('radius').value;
-      // Lagrer lokasjonen til Supabase
-      console.log("Lagrer profil:", userLat, userLng, radius);
-    }
-
     async function loadItems() {
-      const { data } = await supabase.from('watched_items').select('*');
+      if (!supabase) return;
+      const { data, error } = await supabase.from('watched_items').select('*');
+      if (error) {
+        showError(error);
+        return;
+      }
       const list = document.getElementById('item-list');
       list.innerHTML = "";
       (data || []).forEach(item => {
@@ -104,19 +127,31 @@
     }
 
     async function addItem() {
+      if (!supabase) return;
       const input = document.getElementById('item-input');
       const query = input.value.trim();
       if (!query) return;
-      await supabase.from('watched_items').insert([{ query }]);
+
+      const { error } = await supabase.from('watched_items').insert([{ query }]);
+      if (error) {
+        showError(error);
+        return;
+      }
       input.value = "";
       loadItems();
     }
 
     async function deleteItem(id) {
-      await supabase.from('watched_items').delete().eq('id', id);
+      if (!supabase) return;
+      const { error } = await supabase.from('watched_items').delete().eq('id', id);
+      if (error) {
+        showError(error);
+        return;
+      }
       loadItems();
     }
 
+    // Last inn listen ved oppstart
     loadItems();
   </script>
 </body>
