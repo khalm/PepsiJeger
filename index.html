@@ -4,44 +4,166 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PepsiJeger 🎯</title>
+  <link rel="manifest" href="manifest.json">
   <style>
-    body { background: #121212; color: #fff; font-family: sans-serif; padding: 20px; text-align: center; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #121212; color: #fff; margin: 0; padding: 20px; }
+    h1 { color: #0085ff; margin-top: 0; }
     .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
-    button { background: #0085ff; color: #fff; border: none; padding: 14px; border-radius: 8px; font-size: 16px; width: 100%; cursor: pointer; }
-    #pos-status { margin-top: 12px; font-size: 14px; color: #aaa; }
+    button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
+    button:active { background: #0066cc; }
+    input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
+    .slider-box { margin-top: 14px; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { background: #2a2a2a; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
+    .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
+    #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
   </style>
 </head>
 <body>
+
   <h1>PepsiJeger 🎯</h1>
 
+  <div id="err-msg"></div>
+
+  <!-- Posisjon & Rekkevidde -->
   <div class="card">
-    <h3>📍 Din Posisjon</h3>
-    <button type="button" onclick="finnPosisjon()">Hent min posisjon</button>
-    <p id="pos-status">Trykk på knappen over for å hente GPS</p>
+    <h3>📍 Din Posisjon & Rekkevidde</h3>
+    <p id="pos-status" class="status-text">Posisjon ikke hentet</p>
+    <button type="button" onclick="hentOgLagrePosisjon()">Hent & Lagre min posisjon</button>
+    
+    <div class="slider-box">
+      <label>Varslingsradius: <strong id="radius-val">5</strong> km</label>
+      <input type="range" id="radius" min="1" max="30" value="5" style="width:100%" oninput="document.getElementById('radius-val').innerText = this.value">
+    </div>
+  </div>
+
+  <!-- Legg til vare -->
+  <div class="card">
+    <h3>🛒 Hva skal vi jakte på?</h3>
+    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Grandiosa...">
+    <button type="button" onclick="leggTilVare()">Legg til i overvåking</button>
+  </div>
+
+  <!-- Overvåkningsliste -->
+  <div class="card">
+    <h3>🎯 Overvåker nå:</h3>
+    <ul id="item-list"></ul>
   </div>
 
   <script>
-    function finnPosisjon() {
+    const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co";
+    const SUPABASE_ANON_KEY = "LIM_INN_DIN_ANON_KEY_HER";
+
+    function visFeil(tekst) {
+      const boks = document.getElementById('err-msg');
+      boks.style.display = 'block';
+      boks.innerText = tekst;
+    }
+
+    async function apiKall(sti, options = {}) {
+      const headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+        "Prefer": options.prefer || "return=representation",
+        ...(options.headers || {})
+      };
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${sti}`, { ...options, headers });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error(errJson.message || "Feilkode " + res.status);
+      }
+      return res.status === 204 ? null : await res.json();
+    }
+
+    function hentOgLagrePosisjon() {
       const status = document.getElementById('pos-status');
-      status.innerText = "Henter posisjon...";
+      status.innerText = "Henter GPS-posisjon...";
 
       if (!navigator.geolocation) {
-        status.innerText = "Geolokasjon støttes ikke av denne nettleseren.";
+        visFeil("Geolokasjon støttes ikke av denne nettleseren.");
         return;
       }
 
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude.toFixed(4);
-          const lng = pos.coords.longitude.toFixed(4);
-          status.innerText = "Posisjon funnet! Lat: " + lat + ", Lng: " + lng;
+        async (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const rad = parseInt(document.getElementById('radius').value, 10);
+          status.innerText = `Posisjon satt (${lat.toFixed(4)}, ${lng.toFixed(4)}). Lagrer...`;
+
+          try {
+            await apiKall('user_profiles', {
+              method: 'POST',
+              prefer: 'resolution=merge-duplicates',
+              body: JSON.stringify({
+                id: 'standard_bruker',
+                latitude: lat,
+                longitude: lng,
+                radius_km: rad,
+                location: `POINT(${lng} ${lat})`
+              })
+            });
+            status.innerText = `Posisjon lagret! (${lat.toFixed(4)}, ${lng.toFixed(4)}) - ${rad} km`;
+          } catch (e) {
+            status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+            visFeil("Kunne ikke lagre profil til Supabase: " + e.message);
+          }
         },
         (err) => {
-          status.innerText = "Feil (" + err.code + "): " + err.message;
+          visFeil("GPS-feil: " + err.message);
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
     }
+
+    async function lastVarer() {
+      try {
+        const varer = await apiKall('watched_items?select=*&order=id.asc');
+        const liste = document.getElementById('item-list');
+        liste.innerHTML = "";
+        (varer || []).forEach(v => {
+          liste.innerHTML += `
+            <li>
+              <span>${v.query}</span>
+              <button class="del-btn" onclick="slettVare('${v.id}')">Slett</button>
+            </li>
+          `;
+        });
+      } catch (e) {
+        visFeil("Kunne ikke hente varer: " + e.message);
+      }
+    }
+
+    async function leggTilVare() {
+      const felt = document.getElementById('item-input');
+      const tekst = felt.value.trim();
+      if (!tekst) return;
+
+      try {
+        await apiKall('watched_items', {
+          method: 'POST',
+          body: JSON.stringify({ query: tekst })
+        });
+        felt.value = "";
+        lastVarer();
+      } catch (e) {
+        visFeil("Kunne ikke legge til vare: " + e.message);
+      }
+    }
+
+    async function slettVare(id) {
+      try {
+        await apiKall(`watched_items?id=eq.${id}`, { method: 'DELETE' });
+        lastVarer();
+      } catch (e) {
+        visFeil("Kunne ikke slette vare: " + e.message);
+      }
+    }
+
+    lastVarer();
   </script>
 </body>
 </html>
