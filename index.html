@@ -1,114 +1,8 @@
-<!DOCTYPE html>
-<html lang="no">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PepsiJeger 🎯</title>
-  <link rel="manifest" href="manifest.json">
-  <style>
-    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #121212; color: #fff; margin: 0; padding: 20px; }
-    h1 { color: #0085ff; margin-top: 0; }
-    .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
-    button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
-    button:active { background: #0066cc; }
-    input[type="text"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: #fff; margin-bottom: 10px; font-size: 16px; }
-    .slider-box { margin-top: 14px; }
-    ul { list-style: none; padding: 0; margin: 0; }
-    li { background: #2a2a2a; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-    .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
-    .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
-    #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
-    
-    /* Tilbudskort */
-    .deal-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding: 12px 0; }
-    .deal-item:last-child { border-bottom: none; }
-    .deal-title { font-weight: bold; font-size: 15px; color: #fff; }
-    .deal-store { font-size: 12px; color: #888; margin-top: 3px; }
-    .deal-price { font-size: 18px; font-weight: bold; color: #4ade80; text-align: right; }
-  </style>
-</head>
-<body>
-
-  <h1>PepsiJeger 🎯</h1>
-
-  <div id="err-msg"></div>
-
-  <!-- Tilbud i nærheten -->
-  <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-      <h3 style="margin: 0;">🔥 Dagens Funn</h3>
-      <button type="button" onclick="lastTilbud()" style="width: auto; padding: 6px 12px; font-size: 13px;">Oppdater</button>
-    </div>
-    <div id="deal-list">
-      <p class="status-text">Laster tilbud...</p>
-    </div>
-  </div>
-
-  <!-- Posisjon & Rekkevidde -->
-  <div class="card">
-    <h3>📍 Din Posisjon & Rekkevidde</h3>
-    <p id="pos-status" class="status-text">Posisjon ikke hentet</p>
-    <button type="button" onclick="hentOgLagrePosisjon()">Hent & Lagre min posisjon</button>
-    
-    <div class="slider-box">
-      <label>Varslingsradius: <strong id="radius-val">5</strong> km</label>
-      <input type="range" id="radius" min="1" max="30" value="5" style="width:100%" oninput="document.getElementById('radius-val').innerText = this.value">
-    </div>
-  </div>
-
-  <!-- Legg til vare -->
-  <div class="card">
-    <h3>🛒 Hva skal vi jakte på?</h3>
-    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Grandiosa...">
-    <button type="button" onclick="leggTilVare()">Legg til i overvåking</button>
-  </div>
-
-  <!-- Overvåkningsliste -->
-  <div class="card">
-    <h3>🎯 Overvåker nå:</h3>
-    <ul id="item-list"></ul>
-  </div>
-
-  <script>
-    const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
-
-    function visFeil(tekst) {
-      const boks = document.getElementById('err-msg');
-      boks.style.display = 'block';
-      boks.innerText = tekst;
-    }
-
-    function skjulFeil() {
-      const boks = document.getElementById('err-msg');
-      boks.style.display = 'none';
-      boks.innerText = '';
-    }
-
-    async function apiKall(sti, options = {}) {
-      const headers = {
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
-        "Content-Type": "application/json",
-        "Prefer": options.prefer || "return=minimal",
-        ...(options.headers || {})
-      };
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${sti}`, { ...options, headers });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ message: res.statusText }));
-        throw new Error(errJson.message || "Feilkode " + res.status);
-      }
-      const tekst = await res.text();
-      return tekst ? JSON.parse(tekst) : null;
-    }
-
     async function lastTilbud() {
       const container = document.getElementById('deal-list');
       container.innerHTML = '<p class="status-text">Laster tilbud...</p>';
       try {
-        // Henter tilbud og kobler på butikknavn fra stores-tabellen
-        const tilbud = await apiKall('deals?select=*,stores(name)&order=id.desc', { prefer: 'return=representation' });
+        const tilbud = await apiKall('deals?select=*&order=id.desc', { prefer: 'return=representation' });
         
         if (!tilbud || tilbud.length === 0) {
           container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet i databasen ennå.</p>';
@@ -117,15 +11,14 @@
 
         container.innerHTML = "";
         tilbud.forEach(d => {
-          const navn = d.product_name || d.name || d.title || "Vare";
-          const butikk = d.stores?.name || d.store_name || "Butikk i nærheten";
+          const navn = d.product_name || d.name || "Vare";
           const pris = (d.price !== undefined && d.price !== null) ? `${d.price} kr` : "Tilbud";
           
           container.innerHTML += `
             <div class="deal-item">
               <div>
                 <div class="deal-title">${navn}</div>
-                <div class="deal-store">📍 ${butikk}</div>
+                <div class="deal-store">📍 Tilbud registrert</div>
               </div>
               <div class="deal-price">${pris}</div>
             </div>
@@ -136,98 +29,3 @@
         visFeil("Feil ved henting av tilbud: " + e.message);
       }
     }
-
-    function hentOgLagrePosisjon() {
-      skjulFeil();
-      const status = document.getElementById('pos-status');
-      status.innerText = "Henter GPS-posisjon...";
-
-      if (!navigator.geolocation) {
-        visFeil("Geolokasjon støttes ikke av denne nettleseren.");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const rad = parseInt(document.getElementById('radius').value, 10);
-          status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)}). Lagrer...`;
-
-          try {
-            await apiKall('user_profiles', {
-              method: 'POST',
-              prefer: 'resolution=merge-duplicates',
-              body: JSON.stringify({
-                id: 'standard_bruker',
-                latitude: lat,
-                longitude: lng,
-                radius_km: rad,
-                location: `POINT(${lng} ${lat})`
-              })
-            });
-            status.innerText = `Posisjon lagret! (${lat.toFixed(4)}, ${lng.toFixed(4)}) - ${rad} km`;
-          } catch (e) {
-            status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-            visFeil("Kunne ikke lagre profil til Supabase: " + e.message);
-          }
-        },
-        (err) => {
-          visFeil("GPS-feil: " + err.message);
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    }
-
-    async function lastVarer() {
-      try {
-        const varer = await apiKall('watched_items?select=*&order=id.asc', { prefer: 'return=representation' });
-        const liste = document.getElementById('item-list');
-        liste.innerHTML = "";
-        (varer || []).forEach(v => {
-          liste.innerHTML += `
-            <li>
-              <span>${v.query}</span>
-              <button class="del-btn" onclick="slettVare('${v.id}')">Slett</button>
-            </li>
-          `;
-        });
-      } catch (e) {
-        visFeil("Kunne ikke hente varer: " + e.message);
-      }
-    }
-
-    async function leggTilVare() {
-      skjulFeil();
-      const felt = document.getElementById('item-input');
-      const tekst = felt.value.trim();
-      if (!tekst) return;
-
-      try {
-        await apiKall('watched_items', {
-          method: 'POST',
-          body: JSON.stringify({ query: tekst })
-        });
-        felt.value = "";
-        lastVarer();
-      } catch (e) {
-        visFeil("Kunne ikke legge til vare: " + e.message);
-      }
-    }
-
-    async function slettVare(id) {
-      skjulFeil();
-      try {
-        await apiKall(`watched_items?id=eq.${id}`, { method: 'DELETE' });
-        lastVarer();
-      } catch (e) {
-        visFeil("Kunne ikke slette vare: " + e.message);
-      }
-    }
-
-    // Oppstart
-    lastVarer();
-    lastTilbud();
-  </script>
-</body>
-</html>
