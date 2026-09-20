@@ -15,6 +15,7 @@
     ul { list-style: none; padding: 0; margin: 0; }
     li { background: #2a2a2a; padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
+    .add-store-btn { background: #22c55e; width: auto; padding: 6px 12px; font-size: 13px; }
     .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
     #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
     
@@ -23,10 +24,8 @@
     .deal-title { font-weight: bold; font-size: 15px; color: #fff; }
     .deal-store { font-size: 12px; color: #888; margin-top: 3px; }
     .deal-price { font-size: 18px; font-weight: bold; color: #4ade80; text-align: right; }
-
-    .chains-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-    .chain-label { display: flex; align-items: center; background: #2a2a2a; padding: 8px 12px; border-radius: 6px; font-size: 14px; cursor: pointer; }
-    .chain-label input { margin-right: 8px; width: 18px; height: 18px; }
+    
+    .store-search-result { background: #242424; border: 1px solid #3a3a3a; border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
   </style>
 </head>
 <body>
@@ -44,27 +43,21 @@
     </div>
   </div>
 
-  <!-- Områder / Postnummer -->
+  <!-- Mine Fysiske Butikker -->
   <div class="card">
-    <h3>📍 Mine Områder / Postnummer</h3>
+    <h3>🏪 Mine Butikker</h3>
+    <p class="status-text">Søk opp og legg til butikkene du handler i:</p>
     <div style="display: flex; gap: 8px;">
-      <input type="text" id="postal-input" placeholder="Postnr" style="flex: 1;" oninput="liveOppslagPostnr(this.value)">
-      <input type="text" id="place-input" placeholder="Sted" style="flex: 1.5;" oninput="liveOppslagSted(this.value)">
+      <input type="text" id="store-search-input" placeholder="f.eks. Hareid, Ulsteinvik, Extra, Kiwi..." style="margin-bottom: 8px;" oninput="sokButikker(this.value)">
     </div>
-    <button type="button" onclick="leggTilOmraade()">Legg til postnummer</button>
-    <ul id="location-list" style="margin-top: 12px;"></ul>
-  </div>
-
-  <!-- Butikker / Kjeder -->
-  <div class="card">
-    <h3>🏪 Velg Butikker & Kjeder</h3>
-    <div id="chains-list" class="chains-grid"></div>
+    <div id="store-search-results"></div>
+    <ul id="my-stores-list" style="margin-top: 12px;"></ul>
   </div>
 
   <!-- Overvåkningsliste -->
   <div class="card">
     <h3>🛒 Varer som overvåkes</h3>
-    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Hvitost, Grandiosa...">
+    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Hvitost, Kaffe, Grandiosa...">
     <button type="button" onclick="leggTilVare()">Legg til i listen</button>
     <ul id="item-list" style="margin-top: 14px;"></ul>
   </div>
@@ -74,7 +67,7 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
     const KASSAL_TOKEN = "DQTTX6WmOLeFCWBv5vl6bvu1IMGL1lc2VgYsedqZ3ac736ca";
 
-    let cachedeKjeder = [];
+    let mineValgteButikker = [];
 
     function visFeil(tekst) {
       const boks = document.getElementById('err-msg');
@@ -104,7 +97,7 @@
       return tekst ? JSON.parse(tekst) : null;
     }
 
-    // --- Ordmatching og Ferskhetssjekk ---
+    // --- Ordmatching ---
     function matcherSoekeord(produktNavn, query) {
       const q = query.trim().toLowerCase();
       const p = produktNavn.toLowerCase();
@@ -123,56 +116,102 @@
       return false;
     }
 
-    function erPrisFersk(datoStreng) {
-      if (!datoStreng) return true;
-      const oppdatertDato = new Date(datoStreng).getTime();
-      const sjuDagerIMs = 7 * 24 * 60 * 60 * 1000;
-      return (Date.now() - oppdatertDato) <= sjuDagerIMs;
-    }
+    // --- Butikksøk mot Kassal Physical Stores API ---
+    let debounceStoreTimer = null;
+    function sokButikker(verdi) {
+      clearTimeout(debounceStoreTimer);
+      const q = verdi.trim();
+      const container = document.getElementById('store-search-results');
+      if (q.length < 2) {
+        container.innerHTML = "";
+        return;
+      }
 
-    // --- Kartverket Live Oppslag ---
-    let debounceTimerSted = null;
-
-    async function liveOppslagPostnr(verdi) {
-      const postnr = verdi.trim();
-      const stedFelt = document.getElementById('place-input');
-      if (postnr.length === 4 && /^\d{4}$/.test(postnr)) {
+      debounceStoreTimer = setTimeout(async () => {
         try {
-          const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(postnr)}&treffPerSide=1`);
+          const res = await fetch(`https://kassal.app/api/v1/physical-stores?search=${encodeURIComponent(q)}&size=8`, {
+            headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
+          });
           if (!res.ok) return;
-          const data = await res.json();
-          if (data.adresser && data.adresser.length > 0) {
-            stedFelt.value = data.adresser[0].poststed;
+          const json = await res.json();
+          const stores = json.data || [];
+
+          container.innerHTML = "";
+          if (stores.length === 0) {
+            container.innerHTML = '<p class="status-text">Ingen butikker funnet med det navnet.</p>';
+            return;
           }
+
+          stores.forEach(s => {
+            const navn = s.name || s.name_full || "Butikk";
+            const adresse = s.address ? ` (${s.address})` : '';
+            const renTekst = navn.replace(/'/g, "\\'");
+            container.innerHTML += `
+              <div class="store-search-result">
+                <span>📍 <strong>${navn}</strong>${adresse}</span>
+                <button class="add-store-btn" onclick="leggTilButikk('${s.id || ''}', '${renTekst}', '${(s.group || s.brand || '').replace(/'/g, "\\'")}')">+ Legg til</button>
+              </div>
+            `;
+          });
         } catch (e) {
-          console.warn(e);
+          console.warn("Feil ved butikksøk:", e);
         }
+      }, 300);
+    }
+
+    async function leggTilButikk(storeId, storeName, chainName) {
+      try {
+        await apiKall('user_stores', {
+          method: 'POST',
+          body: JSON.stringify({ store_id: String(storeId), store_name: storeName, chain_name: chainName })
+        });
+        document.getElementById('store-search-input').value = "";
+        document.getElementById('store-search-results').innerHTML = "";
+        await lastMineButikker();
+        oppdaterOgSynkLive();
+      } catch (e) {
+        visFeil("Kunne ikke lagre butikk: " + e.message);
       }
     }
 
-    function liveOppslagSted(verdi) {
-      clearTimeout(debounceTimerSted);
-      const sted = verdi.trim();
-      const postnrFelt = document.getElementById('postal-input');
-      if (sted.length >= 3) {
-        debounceTimerSted = setTimeout(async () => {
-          try {
-            const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(sted)}&treffPerSide=1`);
-            if (!res.ok) return;
-            const data = await res.json();
-            if (data.adresser && data.adresser.length > 0) {
-              postnrFelt.value = data.adresser[0].postnummer;
-            }
-          } catch (e) {
-            console.warn(e);
-          }
-        }, 250);
+    async function slettButikk(id) {
+      try {
+        await apiKall(`user_stores?id=eq.${id}`, { method: 'DELETE' });
+        await lastMineButikker();
+        oppdaterOgSynkLive();
+      } catch (e) {
+        visFeil("Kunne ikke slette butikk: " + e.message);
       }
     }
 
-    // --- Kassal Live Henting ---
+    async function lastMineButikker() {
+      try {
+        const butikker = await apiKall('user_stores?select=*&order=created_at.asc', { prefer: 'return=representation' });
+        mineValgteButikker = butikker || [];
+        const liste = document.getElementById('my-stores-list');
+        liste.innerHTML = "";
+
+        if (mineValgteButikker.length === 0) {
+          liste.innerHTML = '<p class="status-text">Ingen butikker lagt til enda. Søk over for å legge til.</p>';
+          return;
+        }
+
+        mineValgteButikker.forEach(b => {
+          liste.innerHTML += `
+            <li>
+              <span>🏪 <strong>${b.store_name}</strong></span>
+              <button class="del-btn" onclick="slettButikk('${b.id}')">Slett</button>
+            </li>
+          `;
+        });
+      } catch (e) {
+        visFeil("Kunne ikke hente butikkene dine: " + e.message);
+      }
+    }
+
+    // --- Hent Varer fra Kassal (Større utvalg: size=100) ---
     async function hentFraKassal(query) {
-      const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=30`, {
+      const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=100`, {
         headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
       });
       if (!res.ok) throw new Error("Kassal API feil: " + res.statusText);
@@ -182,18 +221,23 @@
 
     function filtrerKassalProdukter(produkter, query) {
       return produkter.filter(item => {
-        const butikk = (item.store?.name || '').toUpperCase();
-        
-        // Sjekk kjede
-        const erValgtKjede = cachedeKjeder.some(k => butikk.includes(k));
-        if (!erValgtKjede) return false;
+        const itemStoreNavn = (item.store?.name || '').toUpperCase();
 
-        // Sjekk ord-match
+        // Butikksjekk:
+        // Hvis brukeren har lagt til spesifikke butikker, sjekker vi mot dem (eller kjedens navn)
+        if (mineValgteButikker.length > 0) {
+          const matcherButikk = mineValgteButikker.some(b => {
+            const minStoreNavn = b.store_name.toUpperCase();
+            const minKjede = (b.chain_name || '').toUpperCase();
+            return itemStoreNavn.includes(minStoreNavn) || 
+                   minStoreNavn.includes(itemStoreNavn) ||
+                   (minKjede && itemStoreNavn.includes(minKjede));
+          });
+          if (!matcherButikk) return false;
+        }
+
+        // Ord-match
         if (!matcherSoekeord(item.name, query)) return false;
-
-        // Sjekk ferskhet
-        const dato = item.updated_at || item.created_at;
-        if (!erPrisFersk(dato)) return false;
 
         return true;
       });
@@ -202,7 +246,7 @@
     // --- Oppdater-knappen for Dagens Funn ---
     async function oppdaterOgSynkLive() {
       const container = document.getElementById('deal-list');
-      container.innerHTML = '<p class="status-text">Henter ferske priser fra Kassal...</p>';
+      container.innerHTML = '<p class="status-text">Henter ferske tilbud fra Kassal...</p>';
       skjulFeil();
 
       try {
@@ -224,9 +268,16 @@
         }
 
         if (alleFunn.length === 0) {
-          container.innerHTML = '<p class="status-text">Ingen ferske tilbud funnet for varene dine akkurat nå.</p>';
+          container.innerHTML = '<p class="status-text">Ingen tilbud funnet for varene dine i de valgte butikkene.</p>';
           return;
         }
+
+        // Sorter laveste pris først
+        alleFunn.sort((a, b) => {
+          const prisA = a.current_price ?? a.price ?? 9999;
+          const prisB = b.current_price ?? b.price ?? 9999;
+          return prisA - prisB;
+        });
 
         container.innerHTML = "";
         alleFunn.forEach(item => {
@@ -243,90 +294,7 @@
           `;
         });
       } catch (e) {
-        visFeil("Kunne ikke hente ferske tilbud: " + e.message);
-      }
-    }
-
-    // --- Områder / Postnummer ---
-    async function lastOmraader() {
-      try {
-        const omraader = await apiKall('user_locations?select=*&order=created_at.asc', { prefer: 'return=representation' });
-        const liste = document.getElementById('location-list');
-        liste.innerHTML = "";
-        (omraader || []).forEach(o => {
-          liste.innerHTML += `
-            <li>
-              <span>📮 <strong>${o.postal_code}</strong> ${o.place_name ? `(${o.place_name})` : ''}</span>
-              <button class="del-btn" onclick="slettOmraade('${o.id}')">Slett</button>
-            </li>
-          `;
-        });
-      } catch (e) {
-        visFeil("Kunne ikke laste områder: " + e.message);
-      }
-    }
-
-    async function leggTilOmraade() {
-      skjulFeil();
-      const pFelt = document.getElementById('postal-input');
-      const sFelt = document.getElementById('place-input');
-      const postnr = pFelt.value.trim();
-      const sted = sFelt.value.trim();
-      if (!postnr) return;
-
-      try {
-        await apiKall('user_locations', {
-          method: 'POST',
-          body: JSON.stringify({ postal_code: postnr, place_name: sted })
-        });
-        pFelt.value = "";
-        sFelt.value = "";
-        lastOmraader();
-      } catch (e) {
-        visFeil("Kunne ikke lagre område: " + e.message);
-      }
-    }
-
-    async function slettOmraade(id) {
-      try {
-        await apiKall(`user_locations?id=eq.${id}`, { method: 'DELETE' });
-        lastOmraader();
-      } catch (e) {
-        visFeil("Kunne ikke slette område: " + e.message);
-      }
-    }
-
-    // --- Butikker / Kjeder ---
-    async function lastKjeder() {
-      try {
-        const kjeder = await apiKall('selected_chains?select=*&order=chain_name.asc', { prefer: 'return=representation' });
-        const boks = document.getElementById('chains-list');
-        boks.innerHTML = "";
-        cachedeKjeder = (kjeder || []).filter(k => k.is_selected).map(k => k.chain_name.toUpperCase());
-
-        (kjeder || []).forEach(k => {
-          boks.innerHTML += `
-            <label class="chain-label">
-              <input type="checkbox" ${k.is_selected ? 'checked' : ''} onchange="endreKjede('${k.chain_name}', this.checked)">
-              ${k.chain_name}
-            </label>
-          `;
-        });
-      } catch (e) {
-        visFeil("Kunne ikke hente butikkjeder: " + e.message);
-      }
-    }
-
-    async function endreKjede(chainName, status) {
-      try {
-        await apiKall(`selected_chains?chain_name=eq.${encodeURIComponent(chainName)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ is_selected: status })
-        });
-        await lastKjeder();
-        oppdaterOgSynkLive();
-      } catch (e) {
-        visFeil("Kunne ikke oppdatere butikkvalg: " + e.message);
+        visFeil("Kunne ikke hente tilbud: " + e.message);
       }
     }
 
@@ -380,8 +348,7 @@
 
     // Oppstart
     async function init() {
-      await lastKjeder();
-      await lastOmraader();
+      await lastMineButikker();
       await lastVarer();
       oppdaterOgSynkLive();
     }
