@@ -68,22 +68,29 @@ async function syncDeals() {
       if (existingStore) {
         storeId = existingStore.id;
       } else {
-        const { data: newStore } = await supabase
+        const { data: newStore, error: storeErr } = await supabase
           .from('stores')
           .insert({ name: storeName })
           .select('id')
           .single();
+        if (storeErr) {
+          console.error(`Feil ved opprettelse av butikk "${storeName}":`, storeErr.message);
+        }
         if (newStore) storeId = newStore.id;
       }
 
-      await supabase.from('deals').insert({
+      const { error: dealErr } = await supabase.from('deals').insert({
         store_id: storeId,
         product_name: item.name,
         price: actualPrice,
         valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       });
 
-      console.log(`Lagret tilbud: ${item.name} (${actualPrice} kr) - ${storeName}`);
+      if (dealErr) {
+        console.error(`DATABASEFEIL ved lagring av "${item.name}":`, dealErr.message);
+      } else {
+        console.log(`Vellykket lagring: ${item.name} (${actualPrice} kr) - ${storeName}`);
+      }
     }
   }
 }
