@@ -19,6 +19,13 @@
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
     .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
     #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
+    
+    /* Tilbudskort */
+    .deal-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding: 12px 0; }
+    .deal-item:last-child { border-bottom: none; }
+    .deal-title { font-weight: bold; font-size: 15px; color: #fff; }
+    .deal-store { font-size: 12px; color: #888; margin-top: 3px; }
+    .deal-price { font-size: 18px; font-weight: bold; color: #4ade80; text-align: right; }
   </style>
 </head>
 <body>
@@ -26,6 +33,17 @@
   <h1>PepsiJeger 🎯</h1>
 
   <div id="err-msg"></div>
+
+  <!-- Tilbud i nærheten -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <h3 style="margin: 0;">🔥 Dagens Funn</h3>
+      <button type="button" onclick="lastTilbud()" style="width: auto; padding: 6px 12px; font-size: 13px;">Oppdater</button>
+    </div>
+    <div id="deal-list">
+      <p class="status-text">Laster tilbud...</p>
+    </div>
+  </div>
 
   <!-- Posisjon & Rekkevidde -->
   <div class="card">
@@ -83,6 +101,37 @@
       }
       const tekst = await res.text();
       return tekst ? JSON.parse(tekst) : null;
+    }
+
+    async function lastTilbud() {
+      const container = document.getElementById('deal-list');
+      container.innerHTML = '<p class="status-text">Laster tilbud...</p>';
+      try {
+        const tilbud = await apiKall('deals?select=*&order=created_at.desc', { prefer: 'return=representation' });
+        if (!tilbud || tilbud.length === 0) {
+          container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet i databasen ennå.</p>';
+          return;
+        }
+        container.innerHTML = "";
+        tilbud.forEach(d => {
+          const navn = d.name || d.title || d.product_name || "Vare";
+          const butikk = d.store || d.store_name || "Butikk i nærheten";
+          const pris = d.price ? `${d.price} kr` : "Tilbud";
+          
+          container.innerHTML += `
+            <div class="deal-item">
+              <div>
+                <div class="deal-title">${navn}</div>
+                <div class="deal-store">📍 ${butikk}</div>
+              </div>
+              <div class="deal-price">${pris}</div>
+            </div>
+          `;
+        });
+      } catch (e) {
+        container.innerHTML = '<p class="status-text">Kunne ikke laste tilbud.</p>';
+        visFeil("Feil ved henting av tilbud: " + e.message);
+      }
     }
 
     function hentOgLagrePosisjon() {
@@ -173,7 +222,9 @@
       }
     }
 
+    // Oppstart
     lastVarer();
+    lastTilbud();
   </script>
 </body>
 </html>
