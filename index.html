@@ -8,7 +8,6 @@
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #121212; color: #fff; margin: 0; padding: 20px; }
-    h1 { color: #0085ff; margin-top: 0; }
     .card { background: #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
     button { background: #0085ff; color: #fff; border: none; padding: 12px 16px; border-radius: 8px; font-weight: bold; width: 100%; cursor: pointer; }
     button:active { background: #0066cc; }
@@ -16,7 +15,6 @@
     ul { list-style: none; padding: 0; margin: 0; }
     li { background: #2a2a2a; padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .del-btn { background: #e32934; width: auto; padding: 6px 12px; font-size: 13px; }
-    .add-btn { background: #22c55e; width: auto; padding: 6px 12px; font-size: 13px; }
     .status-text { font-size: 13px; color: #aaa; margin: 8px 0; }
     #err-msg { display: none; background: #3b181a; color: #ff8080; border: 1px solid #ff4d4d; border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 13px; word-break: break-word; }
     
@@ -33,20 +31,7 @@
 </head>
 <body>
 
-  <h1>PepsiJeger 🎯</h1>
-
   <div id="err-msg"></div>
-
-  <!-- Hurtigsøk her og nå -->
-  <div class="card">
-    <h3>⚡ Direktesøk (Her og nå)</h3>
-    <p class="status-text">Søk opp dagsaktuelle priser på hva som helst:</p>
-    <div style="display: flex; gap: 8px;">
-      <input type="text" id="live-query-input" placeholder="f.eks. Kaffe, Norvegia, Egg..." style="margin-bottom: 0;">
-      <button type="button" onclick="utfoerLiveSoek()" style="width: auto; padding: 0 20px;">Søk</button>
-    </div>
-    <div id="search-results" style="margin-top: 12px;"></div>
-  </div>
 
   <!-- Dagens Funn -->
   <div class="card">
@@ -78,17 +63,15 @@
 
   <!-- Overvåkningsliste -->
   <div class="card">
-    <h3>🛒 Fast Overvåking (Hentes hver natt)</h3>
+    <h3>🛒 Varer som overvåkes</h3>
     <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Hvitost, Grandiosa...">
-    <button type="button" onclick="leggTilVare()">Legg til i overvåking</button>
+    <button type="button" onclick="leggTilVare()">Legg til i listen</button>
     <ul id="item-list" style="margin-top: 14px;"></ul>
   </div>
 
   <script>
     const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
-    
-    // Kassal API-token
     const KASSAL_TOKEN = "DQTTX6WmOLeFCWBv5vl6bvu1IMGL1lc2VgYsedqZ3ac736ca";
 
     let cachedeKjeder = [];
@@ -121,7 +104,7 @@
       return tekst ? JSON.parse(tekst) : null;
     }
 
-    // --- Språk- og Ferskhetsregler ---
+    // --- Ordmatching og Ferskhetssjekk ---
     function matcherSoekeord(produktNavn, query) {
       const q = query.trim().toLowerCase();
       const p = produktNavn.toLowerCase();
@@ -187,10 +170,11 @@
       }
     }
 
-    // --- Kassal Direkte Henting ---
+    // --- Kassal Live Henting ---
     async function hentFraKassal(query) {
-      const headers = KASSAL_TOKEN ? { "Authorization": `Bearer ${KASSAL_TOKEN}` } : {};
-      const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=30`, { headers });
+      const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=30`, {
+        headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
+      });
       if (!res.ok) throw new Error("Kassal API feil: " + res.statusText);
       const json = await res.json();
       return json.data || [];
@@ -199,6 +183,7 @@
     function filtrerKassalProdukter(produkter, query) {
       return produkter.filter(item => {
         const butikk = (item.store?.name || '').toUpperCase();
+        
         // Sjekk kjede
         const erValgtKjede = cachedeKjeder.some(k => butikk.includes(k));
         if (!erValgtKjede) return false;
@@ -214,56 +199,6 @@
       });
     }
 
-    // --- Direktesøk ---
-    async function utfoerLiveSoek() {
-      const input = document.getElementById('live-query-input');
-      const q = input.value.trim();
-      const boks = document.getElementById('search-results');
-      if (!q) return;
-
-      boks.innerHTML = '<p class="status-text">Søker etter dagsferske priser...</p>';
-      skjulFeil();
-
-      try {
-        const raaData = await hentFraKassal(q);
-        const treff = filtrerKassalProdukter(raaData, q);
-
-        if (treff.length === 0) {
-          boks.innerHTML = '<p class="status-text">Ingen ferske treff i dine valgte butikker.</p>';
-          return;
-        }
-
-        boks.innerHTML = "";
-        treff.forEach(item => {
-          const butikk = item.store?.name || "Butikk";
-          const pris = item.current_price ?? item.price ?? 0;
-          boks.innerHTML += `
-            <div class="deal-item">
-              <div>
-                <div class="deal-title">${item.name}</div>
-                <div class="deal-store">📍 ${butikk}</div>
-              </div>
-              <div style="display: flex; align-items: center; gap: 10px;">
-                <div class="deal-price">${pris} kr</div>
-                <button class="add-btn" onclick="leggTilDirekteVare('${item.name.replace(/'/g, "\\'")}')">+ Følg</button>
-              </div>
-            </div>
-          `;
-        });
-      } catch (e) {
-        boks.innerHTML = '<p class="status-text">Kunne ikke fullføre søket.</p>';
-        visFeil(e.message);
-      }
-    }
-
-    async function leggTilDirekteVare(navn) {
-      await apiKall('watched_items', {
-        method: 'POST',
-        body: JSON.stringify({ query: navn })
-      });
-      lastVarer();
-    }
-
     // --- Oppdater-knappen for Dagens Funn ---
     async function oppdaterOgSynkLive() {
       const container = document.getElementById('deal-list');
@@ -273,7 +208,7 @@
       try {
         const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
         if (!varer || varer.length === 0) {
-          container.innerHTML = '<p class="status-text">Legg til varer i overvåkingen for å se tilbud.</p>';
+          container.innerHTML = '<p class="status-text">Legg til varer i listen under for å se tilbud.</p>';
           return;
         }
 
@@ -289,7 +224,7 @@
         }
 
         if (alleFunn.length === 0) {
-          container.innerHTML = '<p class="status-text">Ingen ferske tilbud funnet for dine varer akkurat nå.</p>';
+          container.innerHTML = '<p class="status-text">Ingen ferske tilbud funnet for varene dine akkurat nå.</p>';
           return;
         }
 
@@ -308,33 +243,7 @@
           `;
         });
       } catch (e) {
-        visFeil("Kunne ikke oppdatere tilbud: " + e.message);
-        lastLagredeTilbud();
-      }
-    }
-
-    async function lastLagredeTilbud() {
-      const container = document.getElementById('deal-list');
-      try {
-        const tilbud = await apiKall('deals?select=*,stores(name)&order=id.desc', { prefer: 'return=representation' });
-        if (!tilbud || tilbud.length === 0) {
-          container.innerHTML = '<p class="status-text">Ingen lagrede tilbud. Trykk Oppdater for å søke.</p>';
-          return;
-        }
-        container.innerHTML = "";
-        tilbud.forEach(d => {
-          container.innerHTML += `
-            <div class="deal-item">
-              <div>
-                <div class="deal-title">${d.product_name}</div>
-                <div class="deal-store">📍 ${d.stores?.name || 'Butikk'}</div>
-              </div>
-              <div class="deal-price">${d.price} kr</div>
-            </div>
-          `;
-        });
-      } catch (e) {
-        console.warn(e);
+        visFeil("Kunne ikke hente ferske tilbud: " + e.message);
       }
     }
 
@@ -415,6 +324,7 @@
           body: JSON.stringify({ is_selected: status })
         });
         await lastKjeder();
+        oppdaterOgSynkLive();
       } catch (e) {
         visFeil("Kunne ikke oppdatere butikkvalg: " + e.message);
       }
@@ -451,7 +361,8 @@
           body: JSON.stringify({ query: tekst })
         });
         felt.value = "";
-        lastVarer();
+        await lastVarer();
+        oppdaterOgSynkLive();
       } catch (e) {
         visFeil("Kunne ikke legge til vare: " + e.message);
       }
@@ -460,13 +371,14 @@
     async function slettVare(id) {
       try {
         await apiKall(`watched_items?id=eq.${id}`, { method: 'DELETE' });
-        lastVarer();
+        await lastVarer();
+        oppdaterOgSynkLive();
       } catch (e) {
         visFeil("Kunne ikke slette vare: " + e.message);
       }
     }
 
-    // Init
+    // Oppstart
     async function init() {
       await lastKjeder();
       await lastOmraader();
