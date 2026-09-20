@@ -1,13 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
 
-const rawUrl = process.env.SUPABASE_URL || '';
-const supabaseUrl = rawUrl.replace(/\/+$/, '');
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// Bruker URL direkte eller renser miljøvariabelen for anførselstegn, mellomrom og skråstreker
+const rawUrl = process.env.SUPABASE_URL || 'https://kxyahkeooiyalrnknlhd.supabase.co';
+const supabaseUrl = rawUrl.replace(/['"\r\n\t ]/g, '').replace(/\/+$/, '');
 
-if (!supabaseUrl || !supabaseKey) {
-  console.error("Mangler SUPABASE_URL eller SUPABASE_SERVICE_ROLE_KEY!");
+const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseKey = rawKey.replace(/['"\r\n\t ]/g, '');
+
+if (!supabaseKey) {
+  console.error("Mangler SUPABASE_SERVICE_ROLE_KEY!");
   process.exit(1);
 }
+
+console.log(`Kobler til Supabase URL: ${supabaseUrl}`);
 
 const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false }
@@ -31,6 +36,8 @@ async function syncDeals() {
 
   if (watchedErr) {
     console.error("Feil ved lesing av watched_items:", watchedErr.message);
+  } else {
+    console.log("watched_items lest OK!");
   }
 
   const queries = (watched && watched.length > 0)
