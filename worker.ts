@@ -1,8 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Bruker URL direkte eller renser miljøvariabelen for anførselstegn, mellomrom og skråstreker
+// Fjerner /rest/v1, skråstreker og ekstra tegn hvis det ligger i hemmeligheten
 const rawUrl = process.env.SUPABASE_URL || 'https://kxyahkeooiyalrnknlhd.supabase.co';
-const supabaseUrl = rawUrl.replace(/['"\r\n\t ]/g, '').replace(/\/+$/, '');
+const supabaseUrl = rawUrl
+  .replace(/['"\r\n\t ]/g, '')
+  .replace(/\/rest\/v1\/?$/, '')
+  .replace(/\/+$/, '');
 
 const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabaseKey = rawKey.replace(/['"\r\n\t ]/g, '');
