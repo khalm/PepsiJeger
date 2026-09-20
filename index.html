@@ -107,16 +107,19 @@
       const container = document.getElementById('deal-list');
       container.innerHTML = '<p class="status-text">Laster tilbud...</p>';
       try {
-        const tilbud = await apiKall('deals?select=*&order=created_at.desc', { prefer: 'return=representation' });
+        // Henter tilbud og kobler på butikknavn fra stores-tabellen
+        const tilbud = await apiKall('deals?select=*,stores(name)&order=id.desc', { prefer: 'return=representation' });
+        
         if (!tilbud || tilbud.length === 0) {
           container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet i databasen ennå.</p>';
           return;
         }
+
         container.innerHTML = "";
         tilbud.forEach(d => {
-          const navn = d.name || d.title || d.product_name || "Vare";
-          const butikk = d.store || d.store_name || "Butikk i nærheten";
-          const pris = d.price ? `${d.price} kr` : "Tilbud";
+          const navn = d.product_name || d.name || d.title || "Vare";
+          const butikk = d.stores?.name || d.store_name || "Butikk i nærheten";
+          const pris = (d.price !== undefined && d.price !== null) ? `${d.price} kr` : "Tilbud";
           
           container.innerHTML += `
             <div class="deal-item">
