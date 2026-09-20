@@ -1,14 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const rawUrl = process.env.SUPABASE_URL || '';
+const supabaseUrl = rawUrl.replace(/\/+$/, '');
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 if (!supabaseUrl || !supabaseKey) {
   console.error("Mangler SUPABASE_URL eller SUPABASE_SERVICE_ROLE_KEY!");
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: { persistSession: false }
+});
 
 interface KassalProduct {
   name: string;
@@ -22,9 +25,13 @@ interface KassalProduct {
 async function syncDeals() {
   console.log("Sjekker overvåkede varer i databasen...");
 
-  const { data: watched } = await supabase
+  const { data: watched, error: watchedErr } = await supabase
     .from('watched_items')
     .select('query');
+
+  if (watchedErr) {
+    console.error("Feil ved lesing av watched_items:", watchedErr.message);
+  }
 
   const queries = (watched && watched.length > 0)
     ? [...new Set(watched.map(w => w.query.trim().toLowerCase()))]
@@ -58,12 +65,16 @@ async function syncDeals() {
       const actualPrice = item.current_price ?? item.price ?? 0;
 
       let storeId: string | null = null;
-      const { data: existingStore } = await supabase
+      const { data: existingStore, error: findStoreErr } = await supabase
         .from('stores')
         .select('id')
         .ilike('name', `%${storeName}%`)
         .limit(1)
         .maybeSingle();
+
+      if (findStoreErr) {
+        console.error(`Feil ved søk etter butikk "${storeName}":`, findStoreErr.message);
+      }
 
       if (existingStore) {
         storeId = existingStore.id;
@@ -73,10 +84,12 @@ async function syncDeals() {
           .insert({ name: storeName })
           .select('id')
           .single();
+
         if (storeErr) {
           console.error(`Feil ved opprettelse av butikk "${storeName}":`, storeErr.message);
+        } else if (newStore) {
+          storeId = newStore.id;
         }
-        if (newStore) storeId = newStore.id;
       }
 
       const { error: dealErr } = await supabase.from('deals').insert({
