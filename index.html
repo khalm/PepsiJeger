@@ -109,7 +109,13 @@
       skjulFeil();
 
       try {
-        const tilbud = await apiKall('deals?select=*&order=id.desc', { prefer: 'return=representation' });
+        // Henter tilbud med butikk-kobling hvis tilgjengelig, ellers faller vi tilbake på vanlige tilbud
+        let tilbud;
+        try {
+          tilbud = await apiKall('deals?select=*,stores(name)&order=id.desc', { prefer: 'return=representation' });
+        } catch {
+          tilbud = await apiKall('deals?select=*&order=id.desc', { prefer: 'return=representation' });
+        }
         
         if (!tilbud || tilbud.length === 0) {
           container.innerHTML = '<p class="status-text">Ingen aktive tilbud funnet i databasen ennå.</p>';
@@ -119,13 +125,14 @@
         container.innerHTML = "";
         tilbud.forEach(d => {
           const navn = d.product_name || d.name || "Vare";
+          const butikk = d.stores?.name || d.store_name || "Butikk i nærheten";
           const pris = (d.price !== undefined && d.price !== null) ? `${d.price} kr` : "Tilbud";
           
           container.innerHTML += `
             <div class="deal-item">
               <div>
                 <div class="deal-title">${navn}</div>
-                <div class="deal-store">📍 Tilbud registrert</div>
+                <div class="deal-store">📍 ${butikk}</div>
               </div>
               <div class="deal-price">${pris}</div>
             </div>
