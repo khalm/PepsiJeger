@@ -25,7 +25,6 @@ async function syncDeals() {
     .from('watched_items')
     .select('query');
 
-  // Hvis ingen varer er lagt til ennå, søker vi automatisk på "pepsi max" som standard
   const queries = (watched && watched.length > 0)
     ? [...new Set(watched.map(w => w.query.trim().toLowerCase()))]
     : ['pepsi max'];
@@ -54,25 +53,48 @@ async function syncDeals() {
     console.log(`Fant ${products.length} produkter for "${query}".`);
 
     for (const item of products) {
-      const storeName = item.store?.name;
-      if (!storeName) continue;
+      const storeName = item.store?.name || 'Ukjent butikk';
 
-      // Finn butikk i databasen hvis den finnes
-      const { data: store } = await supabase
+      // Finn butikk i databasen eller opprett den automatisk hvis den ikke finnes
+      let storeId: string | null = null;
+      const { data: existingStore } = await supabase
         .from('stores')
         .select('id')
         .ilike('name', `%${storeName}%`)
         .limit(1)
         .maybeSingle();
 
-      if (store) {
+      if (existingStore) {
+        storeId = existingStore.id;
+      } else {
+        const { data: newStore } = await supabase
+          .from('stores')
+          .insert({ name: storeName })
+          .select('id')
+          .single();
+        if (newStore) storeId = newStore.id;
+      }
+
+      // Lagre tilbudet
+      const { error: insertErr } = await supabase.from('deals').insert({
+        store_id: storeId,
+        product_name: item.name,
+        price: item.price,
+        store_name: storeName,
+        valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      });
+
+      if (insertErr) {
+        // Hvis tabellen mangler kolonnen 'store_name', prøv uten den
         await supabase.from('deals').insert({
-          store_id: store.id,
+          store_id: storeId,
           product_name: item.name,
           price: item.price,
           valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         });
       }
+
+      console.log(`Lagret tilbud: ${item.name} (${item.price} kr) - ${storeName}`);
     }
   }
 }
