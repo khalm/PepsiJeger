@@ -27,21 +27,36 @@ interface KassalProduct {
   };
 }
 
-// Streng sjekk for at søkeordet er et eget ord i tittelen
+// Generell norsk ordgjenkjenner for alle typer varer
 function matcherSoekeord(produktNavn: string, query: string): boolean {
   const q = query.trim().toLowerCase();
   const p = produktNavn.toLowerCase();
 
-  // Escape spesielle tegn for regex
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Matcher ordgrenser slik at "ost" matcher "Ost", "Revet ost", "Hvitost", men IKKE "leverpostei" eller "frokost"
-  const regex = new RegExp(`(^|[\\s,.-])${escaped}([\\s,.-]|$)`, 'i');
-  
-  // Tillater også vanlige sammensatte ord som starter med eller har bindestrek med søkeordet (f.eks. "norvegia-ost", "oste-dip")
-  if (regex.test(p)) return true;
-  
-  // Ekstra sjekk for sammensatte ord spesifikt for enkle søkeord
-  if (q.length >= 4 && p.includes(q)) return true;
+  // 1. Flerords-søk (f.eks. "pepsi max", "tine melk")
+  if (q.includes(' ')) {
+    return p.includes(q);
+  }
+
+  // 2. Del opp varenavnet i ord (fjerner tegn, prosent, bindestreker osv.)
+  const ordListe = p.split(/[\s,./\-_+()%0-9]+/).filter(Boolean);
+
+  for (const ord of ordListe) {
+    // A. Eksakt ord (f.eks. "ost", "ris", "mel", "te")
+    if (ord === q) return true;
+
+    // B. Sammensatt ord med søkeordet bakerst (f.eks. "hvitost", "jasminris", "hvetemel")
+    // For å unngå tilfeldige endelser (som f.eks. "frokost" på "ost")
+    // krever vi at forstavelsen gir mening som sammensatt ord.
+    if (ord.endsWith(q) && ord.length >= q.length + 2) {
+      if (q === 'ost' && ord === 'frokost') continue; // kjent unntak i norsk ordstamme
+      return true;
+    }
+
+    // C. Sammensatt ord med søkeordet foran (f.eks. "melkekartong", "tepose", "ostepop")
+    if (ord.startsWith(q) && ord.length >= q.length + 2) {
+      return true;
+    }
+  }
 
   return false;
 }
@@ -96,21 +111,17 @@ async function syncDeals() {
       const storeName = item.store?.name || 'Ukjent butikk';
       const storeNameUpper = storeName.toUpperCase();
 
-      // SJEKK 1: Butikkfilter
+      // Sjekk butikkjede
       const isStoreAllowed = allowedChains.some(chain => storeNameUpper.includes(chain));
-      if (!isStoreAllowed) {
-        // Hopper over butikker som ikke er valgt (f.eks. Oda, Meny, Joker hvis avskrudd)
-        continue;
-      }
+      if (!isStoreAllowed) continue;
 
-      // SJEKK 2: Ordgrense-sjekk (fjerner leverpostei på "ost")
+      // Sjekk ord-match
       if (!matcherSoekeord(item.name, query)) {
         continue;
       }
 
       const actualPrice = item.current_price ?? item.price ?? 0;
 
-      // Finn eller opprett butikk
       let storeId: string | null = null;
       const { data: existingStore } = await supabase
         .from('stores')
@@ -135,7 +146,6 @@ async function syncDeals() {
         if (newStore) storeId = newStore.id;
       }
 
-      // Lagre tilbud
       await supabase.from('deals').insert({
         store_id: storeId,
         product_name: item.name,
