@@ -12,7 +12,8 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 interface KassalProduct {
   name: string;
-  price: number;
+  price?: number;
+  current_price?: number;
   store?: {
     name?: string;
   };
@@ -21,7 +22,7 @@ interface KassalProduct {
 async function syncDeals() {
   console.log("Sjekker overvåkede varer i databasen...");
 
-  const { data: watched, error: watchedErr } = await supabase
+  const { data: watched } = await supabase
     .from('watched_items')
     .select('query');
 
@@ -54,8 +55,8 @@ async function syncDeals() {
 
     for (const item of products) {
       const storeName = item.store?.name || 'Ukjent butikk';
+      const actualPrice = item.current_price ?? item.price ?? 0;
 
-      // Finn butikk i databasen eller opprett den automatisk hvis den ikke finnes
       let storeId: string | null = null;
       const { data: existingStore } = await supabase
         .from('stores')
@@ -75,26 +76,14 @@ async function syncDeals() {
         if (newStore) storeId = newStore.id;
       }
 
-      // Lagre tilbudet
-      const { error: insertErr } = await supabase.from('deals').insert({
+      await supabase.from('deals').insert({
         store_id: storeId,
         product_name: item.name,
-        price: item.price,
-        store_name: storeName,
+        price: actualPrice,
         valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       });
 
-      if (insertErr) {
-        // Hvis tabellen mangler kolonnen 'store_name', prøv uten den
-        await supabase.from('deals').insert({
-          store_id: storeId,
-          product_name: item.name,
-          price: item.price,
-          valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-        });
-      }
-
-      console.log(`Lagret tilbud: ${item.name} (${item.price} kr) - ${storeName}`);
+      console.log(`Lagret tilbud: ${item.name} (${actualPrice} kr) - ${storeName}`);
     }
   }
 }
