@@ -22,6 +22,8 @@ interface KassalProduct {
   name: string;
   price?: number;
   current_price?: number;
+  updated_at?: string;
+  created_at?: string;
   store?: {
     name?: string;
   };
@@ -32,27 +34,20 @@ function matcherSoekeord(produktNavn: string, query: string): boolean {
   const q = query.trim().toLowerCase();
   const p = produktNavn.toLowerCase();
 
-  // 1. Flerords-søk (f.eks. "pepsi max", "tine melk")
   if (q.includes(' ')) {
     return p.includes(q);
   }
 
-  // 2. Del opp varenavnet i ord (fjerner tegn, prosent, bindestreker osv.)
   const ordListe = p.split(/[\s,./\-_+()%0-9]+/).filter(Boolean);
 
   for (const ord of ordListe) {
-    // A. Eksakt ord (f.eks. "ost", "ris", "mel", "te")
     if (ord === q) return true;
 
-    // B. Sammensatt ord med søkeordet bakerst (f.eks. "hvitost", "jasminris", "hvetemel")
-    // For å unngå tilfeldige endelser (som f.eks. "frokost" på "ost")
-    // krever vi at forstavelsen gir mening som sammensatt ord.
     if (ord.endsWith(q) && ord.length >= q.length + 2) {
-      if (q === 'ost' && ord === 'frokost') continue; // kjent unntak i norsk ordstamme
+      if (q === 'ost' && ord === 'frokost') continue;
       return true;
     }
 
-    // C. Sammensatt ord med søkeordet foran (f.eks. "melkekartong", "tepose", "ostepop")
     if (ord.startsWith(q) && ord.length >= q.length + 2) {
       return true;
     }
@@ -61,7 +56,28 @@ function matcherSoekeord(produktNavn: string, query: string): boolean {
   return false;
 }
 
+// Sjekker om prisen er oppdatert i løpet av de siste 7 dagene
+function erPrisFersk(datoStreng?: string): boolean {
+  if (!datoStreng) return true; // Hvis dato mangler, slipper den gjennom under tvil
+  const oppdatertDato = new Date(datoStreng).getTime();
+  const naatid = Date.now();
+  const sjuDagerIMs = 7 * 24 * 60 * 60 * 1000;
+  
+  return (naatid - oppdatertDato) <= sjuDagerIMs;
+}
+
 async function syncDeals() {
+  console.log("Renser gamle tilbud fra databasen...");
+  // Tømmer gamle tilbud så du kun har de ferskeste aktuelle tilbudene i appen
+  const { error: deleteErr } = await supabase
+    .from('deals')
+    .delete()
+    .neq('id', '00000000-0000-0000-0000-000000000000');
+
+  if (deleteErr) {
+    console.warn("Kunne ikke slette gamle tilbud:", deleteErr.message);
+  }
+
   console.log("Henter innstillinger fra databasen...");
 
   // 1. Hent godkjente butikkjeder
@@ -111,12 +127,19 @@ async function syncDeals() {
       const storeName = item.store?.name || 'Ukjent butikk';
       const storeNameUpper = storeName.toUpperCase();
 
-      // Sjekk butikkjede
+      // SJEKK 1: Butikkfilter
       const isStoreAllowed = allowedChains.some(chain => storeNameUpper.includes(chain));
       if (!isStoreAllowed) continue;
 
-      // Sjekk ord-match
+      // SJEKK 2: Ordgrense / språksjekk
       if (!matcherSoekeord(item.name, query)) {
+        continue;
+      }
+
+      // SJEKK 3: Ferskhetssjekk (kun priser bekreftet siste 7 dager)
+      const sistOppdatert = item.updated_at || item.created_at;
+      if (!erPrisFersk(sistOppdatert)) {
+        console.log(`⏳ Forkaster utdatert pris (${sistOppdatert}): "${item.name}"`);
         continue;
       }
 
@@ -153,7 +176,7 @@ async function syncDeals() {
         valid_to: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       });
 
-      console.log(`✅ Godkjent og lagret: "${item.name}" (${actualPrice} kr) - ${storeName}`);
+      console.log(`✅ Aktuell pris lagret: "${item.name}" (${actualPrice} kr) - ${storeName}`);
     }
   }
 }
