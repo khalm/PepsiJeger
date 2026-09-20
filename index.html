@@ -62,12 +62,18 @@
       boks.innerText = tekst;
     }
 
+    function skjulFeil() {
+      const boks = document.getElementById('err-msg');
+      boks.style.display = 'none';
+      boks.innerText = '';
+    }
+
     async function apiKall(sti, options = {}) {
       const headers = {
         "apikey": SUPABASE_ANON_KEY,
         "Authorization": "Bearer " + SUPABASE_ANON_KEY,
         "Content-Type": "application/json",
-        "Prefer": options.prefer || "return=representation",
+        "Prefer": options.prefer || "return=minimal",
         ...(options.headers || {})
       };
       const res = await fetch(`${SUPABASE_URL}/rest/v1/${sti}`, { ...options, headers });
@@ -75,10 +81,12 @@
         const errJson = await res.json().catch(() => ({ message: res.statusText }));
         throw new Error(errJson.message || "Feilkode " + res.status);
       }
-      return res.status === 204 ? null : await res.json();
+      const tekst = await res.text();
+      return tekst ? JSON.parse(tekst) : null;
     }
 
     function hentOgLagrePosisjon() {
+      skjulFeil();
       const status = document.getElementById('pos-status');
       status.innerText = "Henter GPS-posisjon...";
 
@@ -92,7 +100,7 @@
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
           const rad = parseInt(document.getElementById('radius').value, 10);
-          status.innerText = `Posisjon satt (${lat.toFixed(4)}, ${lng.toFixed(4)}). Lagrer...`;
+          status.innerText = `Posisjon funnet (${lat.toFixed(4)}, ${lng.toFixed(4)}). Lagrer...`;
 
           try {
             await apiKall('user_profiles', {
@@ -121,7 +129,7 @@
 
     async function lastVarer() {
       try {
-        const varer = await apiKall('watched_items?select=*&order=id.asc');
+        const varer = await apiKall('watched_items?select=*&order=id.asc', { prefer: 'return=representation' });
         const liste = document.getElementById('item-list');
         liste.innerHTML = "";
         (varer || []).forEach(v => {
@@ -138,6 +146,7 @@
     }
 
     async function leggTilVare() {
+      skjulFeil();
       const felt = document.getElementById('item-input');
       const tekst = felt.value.trim();
       if (!tekst) return;
@@ -155,6 +164,7 @@
     }
 
     async function slettVare(id) {
+      skjulFeil();
       try {
         await apiKall(`watched_items?id=eq.${id}`, { method: 'DELETE' });
         lastVarer();
