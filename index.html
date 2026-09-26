@@ -81,7 +81,7 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
     const KASSAL_TOKEN = "DQTTX6WmOLeFCWBv5vl6bvu1IMGL1lc2VgYsedqZ3ac736ca";
 
-    // Faste EAN-strekkoder for 100 % treff på Pepsi Max multipacks (1,5L)
+    // Faste EAN-strekkoder for Pepsi Max 1,5L multipacks
     const PEPSI_EAN = {
       "Pepsi Max 4-pk (1,5L)": "7044618874687",
       "Pepsi Max 6-pk (1,5L)": "7044613874682"
@@ -120,7 +120,7 @@
     // --- Ordmatching ---
     function matcherSoekeord(produktNavn, query) {
       const q = query.trim().toLowerCase();
-      const p = produktNavn.toLowerCase();
+      const p = (produktNavn || '').toLowerCase();
 
       if (q.includes(' ')) return p.includes(q);
 
@@ -318,14 +318,53 @@
     }
 
     // --- Kassal Datahenting ---
-    async function hentFraEan(ean) {
+    async function hentFraEan(ean, standardNavn) {
       try {
         const res = await fetch(`https://kassal.app/api/v1/products/ean/${ean}`, {
           headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
         });
         if (!res.ok) return [];
         const json = await res.json();
-        return Array.isArray(json.data) ? json.data : (json.data ? [json.data] : []);
+        const d = json.data;
+        if (!d) return [];
+
+        let resultater = [];
+        const fellesNavn = d.name || standardNavn;
+
+        if (Array.isArray(d.products) && d.products.length > 0) {
+          d.products.forEach(p => {
+            const prisVerdi = p.current_price ?? p.price ?? 0;
+            if (prisVerdi > 0) {
+              resultater.push({
+                name: p.name || fellesNavn,
+                price: prisVerdi,
+                store: p.store || { name: p.store_name || "Butikk" }
+              });
+            }
+          });
+        } else if (Array.isArray(d.prices) && d.prices.length > 0) {
+          d.prices.forEach(p => {
+            const prisVerdi = p.price ?? p.current_price ?? 0;
+            if (prisVerdi > 0) {
+              resultater.push({
+                name: fellesNavn,
+                price: prisVerdi,
+                store: p.store || { name: p.store_name || "Butikk" }
+              });
+            }
+          });
+        } else if (d.name) {
+          const prisVerdi = d.current_price ?? d.price ?? 0;
+          if (prisVerdi > 0) {
+            resultater.push({
+              name: d.name,
+              price: prisVerdi,
+              store: d.store || { name: "Butikk" }
+            });
+          }
+        }
+
+        return resultater;
       } catch (e) {
         console.warn(`Feil ved oppslag på EAN ${ean}:`, e);
         return [];
@@ -333,30 +372,46 @@
     }
 
     async function hentFraKassal(query) {
-      const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=100`, {
-        headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
-      });
-      if (!res.ok) throw new Error("Kassal API feil: " + res.statusText);
-      const json = await res.json();
-      return json.data || [];
+      try {
+        const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=100`, {
+          headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
+        });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return json.data || [];
+      } catch (e) {
+        console.warn(`Feil ved søk etter ${query}:`, e);
+        return [];
+      }
     }
 
     function filtrerKassalProdukter(produkter, query, erEan = false) {
-      return produkter.filter(item => {
+      return (produkter || []).filter(item => {
+        const vareNavn = (item.name || '').trim();
+        const pris = item.current_price ?? item.price;
+
+        // Kast varer som mangler gyldig navn eller pris (hindrer undefined og 0 kr)
+        if (!vareNavn || vareNavn.toLowerCase() === 'undefined' || pris === undefined || pris === null || Number(pris) <= 0) {
+          return false;
+        }
+
         const itemStoreNavn = (item.store?.name || '').toUpperCase();
 
         if (mineValgteButikker.length > 0) {
           const matcherButikk = mineValgteButikker.some(b => {
-            const minStoreNavn = b.store_name.toUpperCase();
+            const minStoreNavn = (b.store_name || '').toUpperCase();
             const minKjede = (b.chain_name || '').toUpperCase();
-            return itemStoreNavn.includes(minStoreNavn) || 
-                   minStoreNavn.includes(itemStoreNavn) ||
-                   (minKjede && itemStoreNavn.includes(minKjede));
+
+            return (
+              itemStoreNavn.includes(minStoreNavn) ||
+              minStoreNavn.includes(itemStoreNavn) ||
+              (minKjede && (itemStoreNavn.includes(minKjede) || minKjede.includes(itemStoreNavn)))
+            );
           });
           if (!matcherButikk) return false;
         }
 
-        if (!erEan && !matcherSoekeord(item.name, query)) {
+        if (!erEan && !matcherSoekeord(vareNavn, query)) {
           return false;
         }
 
@@ -375,12 +430,12 @@
 
         // 1. EAN-oppslag for Pepsi Max 4-pk og 6-pk 1,5L
         for (const [tittel, ean] of Object.entries(PEPSI_EAN)) {
-          const eanTreff = await hentFraEan(ean);
+          const eanTreff = await hentFraEan(ean, tittel);
           const filtrert = filtrerKassalProdukter(eanTreff, "pepsi", true);
           alleFunn = alleFunn.concat(filtrert);
         }
 
-        // 2. Fritext-søk for øvrige varer
+        // 2. Søk etter øvrige overvåkede varer
         const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
         if (varer && varer.length > 0) {
           for (const v of varer) {
@@ -391,7 +446,7 @@
               const filtrert = filtrerKassalProdukter(raaData, v.query, false);
               alleFunn = alleFunn.concat(filtrert);
             } catch (e) {
-              console.warn(`Feil under henting av ${v.query}:`, e);
+              console.warn(`Feil ved oppdatering av ${v.query}:`, e);
             }
           }
         }
@@ -403,8 +458,8 @@
 
         // Sorter laveste pris først
         alleFunn.sort((a, b) => {
-          const prisA = a.current_price ?? a.price ?? 9999;
-          const prisB = b.current_price ?? b.price ?? 9999;
+          const prisA = Number(a.current_price ?? a.price ?? 9999);
+          const prisB = Number(b.current_price ?? b.price ?? 9999);
           return prisA - prisB;
         });
 
