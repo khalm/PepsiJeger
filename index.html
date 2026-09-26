@@ -81,7 +81,6 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
     const KASSAL_TOKEN = "DQTTX6WmOLeFCWBv5vl6bvu1IMGL1lc2VgYsedqZ3ac736ca";
 
-    // Faste EAN-strekkoder for Pepsi Max 1,5L multipacks
     const PEPSI_EAN = {
       "Pepsi Max 4-pk (1,5L)": "7044618874687",
       "Pepsi Max 6-pk (1,5L)": "7044613874682"
@@ -134,6 +133,28 @@
         if (ord.startsWith(q) && ord.length >= q.length + 2) return true;
       }
       return false;
+    }
+
+    // Sjekker om et Pepsi-produkt er en 4-pk eller 6-pk 1,5L
+    function erPepsiFlerpakning(produktNavn) {
+      const p = (produktNavn || '').toLowerCase().replace(/\s+/g, '');
+      const er4 = /(4x1[,.]5|4[-]?pk.*1[,.]5|1[,.]5.*4[-]?pk)/i.test(p);
+      const er6 = /(6x1[,.]5|6[-]?pk.*1[,.]5|1[,.]5.*6[-]?pk)/i.test(p);
+      return er4 || er6;
+    }
+
+    // Ekstraherer kjerne-kjedenavn (f.eks. "Extra Hareid" -> "EXTRA", "EUROSPAR Hareid" -> "SPAR")
+    function finnKjerneKjede(navn) {
+      const n = (navn || '').toUpperCase();
+      if (n.includes('EXTRA') || n.includes('COOP EXTRA')) return 'EXTRA';
+      if (n.includes('BUNNPRIS')) return 'BUNNPRIS';
+      if (n.includes('SPAR') || n.includes('EUROSPAR')) return 'SPAR';
+      if (n.includes('REMA')) return 'REMA 1000';
+      if (n.includes('KIWI')) return 'KIWI';
+      if (n.includes('PRIX') || n.includes('COOP PRIX')) return 'COOP PRIX';
+      if (n.includes('MEGA') || n.includes('COOP MEGA')) return 'COOP MEGA';
+      if (n.includes('MENY')) return 'MENY';
+      return n.split(' ')[0];
     }
 
     // --- Butikksøk mot Kassal Physical Stores API ---
@@ -366,7 +387,6 @@
 
         return resultater;
       } catch (e) {
-        console.warn(`Feil ved oppslag på EAN ${ean}:`, e);
         return [];
       }
     }
@@ -380,7 +400,6 @@
         const json = await res.json();
         return json.data || [];
       } catch (e) {
-        console.warn(`Feil ved søk etter ${query}:`, e);
         return [];
       }
     }
@@ -388,27 +407,32 @@
     function filtrerKassalProdukter(produkter, query, erEan = false) {
       return (produkter || []).filter(item => {
         const vareNavn = (item.name || '').trim();
-        const pris = item.current_price ?? item.price;
+        const pris = Number(item.current_price ?? item.price ?? 0);
 
-        // Kast varer som mangler gyldig navn eller pris (hindrer undefined og 0 kr)
-        if (!vareNavn || vareNavn.toLowerCase() === 'undefined' || pris === undefined || pris === null || Number(pris) <= 0) {
+        if (!vareNavn || vareNavn.toLowerCase() === 'undefined' || pris <= 0) {
           return false;
         }
 
-        const itemStoreNavn = (item.store?.name || '').toUpperCase();
-
+        // Butikksjekk mot dine valgte butikker
         if (mineValgteButikker.length > 0) {
+          const itemStoreNavn = (item.store?.name || '').toUpperCase();
           const matcherButikk = mineValgteButikker.some(b => {
             const minStoreNavn = (b.store_name || '').toUpperCase();
-            const minKjede = (b.chain_name || '').toUpperCase();
+            const minKjede = finnKjerneKjede(b.store_name);
 
             return (
               itemStoreNavn.includes(minStoreNavn) ||
               minStoreNavn.includes(itemStoreNavn) ||
-              (minKjede && (itemStoreNavn.includes(minKjede) || minKjede.includes(itemStoreNavn)))
+              itemStoreNavn.includes(minKjede) ||
+              minKjede.includes(itemStoreNavn)
             );
           });
           if (!matcherButikk) return false;
+        }
+
+        // Hvis det er et generelt Pepsi-søk: tillat kun 4-pk eller 6-pk 1,5L
+        if (!erEan && query.toLowerCase().includes('pepsi')) {
+          return erPepsiFlerpakning(vareNavn);
         }
 
         if (!erEan && !matcherSoekeord(vareNavn, query)) {
@@ -428,14 +452,19 @@
       try {
         let alleFunn = [];
 
-        // 1. EAN-oppslag for Pepsi Max 4-pk og 6-pk 1,5L
+        // 1. EAN-oppslag for Pepsi Max 4-pk og 6-pk (1,5L)
         for (const [tittel, ean] of Object.entries(PEPSI_EAN)) {
           const eanTreff = await hentFraEan(ean, tittel);
           const filtrert = filtrerKassalProdukter(eanTreff, "pepsi", true);
           alleFunn = alleFunn.concat(filtrert);
         }
 
-        // 2. Søk etter øvrige overvåkede varer
+        // 2. Fritext-søk etter Pepsi Max (sikrer treff fra kjeder som ikke mapper EAN-underpriser)
+        const pepsiFritekst = await hentFraKassal("pepsi max");
+        const filtrertPepsi = filtrerKassalProdukter(pepsiFritekst, "pepsi max", false);
+        alleFunn = alleFunn.concat(filtrertPepsi);
+
+        // 3. Søk etter øvrige overvåkede varer fra databasen
         const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
         if (varer && varer.length > 0) {
           for (const v of varer) {
@@ -446,25 +475,36 @@
               const filtrert = filtrerKassalProdukter(raaData, v.query, false);
               alleFunn = alleFunn.concat(filtrert);
             } catch (e) {
-              console.warn(`Feil ved oppdatering av ${v.query}:`, e);
+              console.warn(e);
             }
           }
         }
 
-        if (alleFunn.length === 0) {
+        // Fjern eventuelle duplikater basert på butikk og navn
+        const unikeFunn = [];
+        const sett = new Set();
+        for (const item of alleFunn) {
+          const nøkkel = `${(item.store?.name || '').trim().toLowerCase()}_${item.name.trim().toLowerCase()}_${item.current_price ?? item.price}`;
+          if (!sett.has(nøkkel)) {
+            sett.add(nøkkel);
+            unikeFunn.push(item);
+          }
+        }
+
+        if (unikeFunn.length === 0) {
           container.innerHTML = '<p class="status-text">Ingen tilbud funnet for varene dine i de valgte butikkene.</p>';
           return;
         }
 
         // Sorter laveste pris først
-        alleFunn.sort((a, b) => {
+        unikeFunn.sort((a, b) => {
           const prisA = Number(a.current_price ?? a.price ?? 9999);
           const prisB = Number(b.current_price ?? b.price ?? 9999);
           return prisA - prisB;
         });
 
         container.innerHTML = "";
-        alleFunn.forEach(item => {
+        unikeFunn.forEach(item => {
           const butikk = item.store?.name || "Butikk";
           const pris = item.current_price ?? item.price ?? 0;
           container.innerHTML += `
