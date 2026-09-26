@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PepsiJeger 🎯</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="pepsijeger_icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="pepsijeger_icon-512.png">
+  <link rel="apple-touch-icon" href="pepsijeger_icon-192.png">
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #121212; color: #fff; margin: 0; padding: 20px; }
@@ -54,10 +57,21 @@
     <ul id="my-stores-list" style="margin-top: 12px;"></ul>
   </div>
 
+  <!-- Områder / Postnummer -->
+  <div class="card">
+    <h3>📍 Mine Områder / Postnummer</h3>
+    <div style="display: flex; gap: 8px;">
+      <input type="text" id="postal-input" placeholder="Postnr" style="flex: 1;" oninput="liveOppslagPostnr(this.value)">
+      <input type="text" id="place-input" placeholder="Sted" style="flex: 1.5;" oninput="liveOppslagSted(this.value)">
+    </div>
+    <button type="button" onclick="leggTilOmraade()">Legg til postnummer</button>
+    <ul id="location-list" style="margin-top: 12px;"></ul>
+  </div>
+
   <!-- Overvåkningsliste -->
   <div class="card">
     <h3>🛒 Varer som overvåkes</h3>
-    <input type="text" id="item-input" placeholder="f.eks. Pepsi Max, Hvitost, Kaffe, Grandiosa...">
+    <input type="text" id="item-input" placeholder="f.eks. Hvitost, Kaffe, Grandiosa...">
     <button type="button" onclick="leggTilVare()">Legg til i listen</button>
     <ul id="item-list" style="margin-top: 14px;"></ul>
   </div>
@@ -66,6 +80,12 @@
     const SUPABASE_URL = "https://kxyahkeooiyalrnknlhd.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4eWFoa2Vvb2l5YWxybmtubGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDU3NzgsImV4cCI6MjEwNTQ4MTc3OH0.oqUVTTPm8UR2cVwF9rH0asu310eTSWkQdyZEare-rww";
     const KASSAL_TOKEN = "DQTTX6WmOLeFCWBv5vl6bvu1IMGL1lc2VgYsedqZ3ac736ca";
+
+    // Faste EAN-strekkoder for 100 % treff på Pepsi Max multipacks (1,5L)
+    const PEPSI_EAN = {
+      "Pepsi Max 4-pk (1,5L)": "7044618874687",
+      "Pepsi Max 6-pk (1,5L)": "7044613874682"
+    };
 
     let mineValgteButikker = [];
 
@@ -209,7 +229,109 @@
       }
     }
 
-    // --- Hent Varer fra Kassal (Større utvalg: size=100) ---
+    // --- Kartverket Live Oppslag ---
+    let debounceTimerSted = null;
+
+    async function liveOppslagPostnr(verdi) {
+      const postnr = verdi.trim();
+      const stedFelt = document.getElementById('place-input');
+      if (postnr.length === 4 && /^\d{4}$/.test(postnr)) {
+        try {
+          const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(postnr)}&treffPerSide=1`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.adresser && data.adresser.length > 0) {
+            stedFelt.value = data.adresser[0].poststed;
+          }
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+    }
+
+    function liveOppslagSted(verdi) {
+      clearTimeout(debounceTimerSted);
+      const sted = verdi.trim();
+      const postnrFelt = document.getElementById('postal-input');
+      if (sted.length >= 3) {
+        debounceTimerSted = setTimeout(async () => {
+          try {
+            const res = await fetch(`https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(sted)}&treffPerSide=1`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.adresser && data.adresser.length > 0) {
+              postnrFelt.value = data.adresser[0].postnummer;
+            }
+          } catch (e) {
+            console.warn(e);
+          }
+        }, 250);
+      }
+    }
+
+    async function lastOmraader() {
+      try {
+        const omraader = await apiKall('user_locations?select=*&order=created_at.asc', { prefer: 'return=representation' });
+        const liste = document.getElementById('location-list');
+        liste.innerHTML = "";
+        (omraader || []).forEach(o => {
+          liste.innerHTML += `
+            <li>
+              <span>📮 <strong>${o.postal_code}</strong> ${o.place_name ? `(${o.place_name})` : ''}</span>
+              <button class="del-btn" onclick="slettOmraade('${o.id}')">Slett</button>
+            </li>
+          `;
+        });
+      } catch (e) {
+        visFeil("Kunne ikke laste områder: " + e.message);
+      }
+    }
+
+    async function leggTilOmraade() {
+      skjulFeil();
+      const pFelt = document.getElementById('postal-input');
+      const sFelt = document.getElementById('place-input');
+      const postnr = pFelt.value.trim();
+      const sted = sFelt.value.trim();
+      if (!postnr) return;
+
+      try {
+        await apiKall('user_locations', {
+          method: 'POST',
+          body: JSON.stringify({ postal_code: postnr, place_name: sted })
+        });
+        pFelt.value = "";
+        sFelt.value = "";
+        lastOmraader();
+      } catch (e) {
+        visFeil("Kunne ikke lagre område: " + e.message);
+      }
+    }
+
+    async function slettOmraade(id) {
+      try {
+        await apiKall(`user_locations?id=eq.${id}`, { method: 'DELETE' });
+        lastOmraader();
+      } catch (e) {
+        visFeil("Kunne ikke slette område: " + e.message);
+      }
+    }
+
+    // --- Kassal Datahenting ---
+    async function hentFraEan(ean) {
+      try {
+        const res = await fetch(`https://kassal.app/api/v1/products/ean/${ean}`, {
+          headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
+        });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return Array.isArray(json.data) ? json.data : (json.data ? [json.data] : []);
+      } catch (e) {
+        console.warn(`Feil ved oppslag på EAN ${ean}:`, e);
+        return [];
+      }
+    }
+
     async function hentFraKassal(query) {
       const res = await fetch(`https://kassal.app/api/v1/products?search=${encodeURIComponent(query)}&size=100`, {
         headers: { "Authorization": `Bearer ${KASSAL_TOKEN}` }
@@ -219,12 +341,10 @@
       return json.data || [];
     }
 
-    function filtrerKassalProdukter(produkter, query) {
+    function filtrerKassalProdukter(produkter, query, erEan = false) {
       return produkter.filter(item => {
         const itemStoreNavn = (item.store?.name || '').toUpperCase();
 
-        // Butikksjekk:
-        // Hvis brukeren har lagt til spesifikke butikker, sjekker vi mot dem (eller kjedens navn)
         if (mineValgteButikker.length > 0) {
           const matcherButikk = mineValgteButikker.some(b => {
             const minStoreNavn = b.store_name.toUpperCase();
@@ -236,8 +356,9 @@
           if (!matcherButikk) return false;
         }
 
-        // Ord-match
-        if (!matcherSoekeord(item.name, query)) return false;
+        if (!erEan && !matcherSoekeord(item.name, query)) {
+          return false;
+        }
 
         return true;
       });
@@ -250,20 +371,28 @@
       skjulFeil();
 
       try {
-        const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
-        if (!varer || varer.length === 0) {
-          container.innerHTML = '<p class="status-text">Legg til varer i listen under for å se tilbud.</p>';
-          return;
+        let alleFunn = [];
+
+        // 1. EAN-oppslag for Pepsi Max 4-pk og 6-pk 1,5L
+        for (const [tittel, ean] of Object.entries(PEPSI_EAN)) {
+          const eanTreff = await hentFraEan(ean);
+          const filtrert = filtrerKassalProdukter(eanTreff, "pepsi", true);
+          alleFunn = alleFunn.concat(filtrert);
         }
 
-        let alleFunn = [];
-        for (const v of varer) {
-          try {
-            const raaData = await hentFraKassal(v.query);
-            const filtrert = filtrerKassalProdukter(raaData, v.query);
-            alleFunn = alleFunn.concat(filtrert);
-          } catch (e) {
-            console.warn(`Feil under henting av ${v.query}:`, e);
+        // 2. Fritext-søk for øvrige varer
+        const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
+        if (varer && varer.length > 0) {
+          for (const v of varer) {
+            if (v.query.toLowerCase().includes('pepsi')) continue;
+
+            try {
+              const raaData = await hentFraKassal(v.query);
+              const filtrert = filtrerKassalProdukter(raaData, v.query, false);
+              alleFunn = alleFunn.concat(filtrert);
+            } catch (e) {
+              console.warn(`Feil under henting av ${v.query}:`, e);
+            }
           }
         }
 
@@ -349,6 +478,7 @@
     // Oppstart
     async function init() {
       await lastMineButikker();
+      await lastOmraader();
       await lastVarer();
       oppdaterOgSynkLive();
     }
