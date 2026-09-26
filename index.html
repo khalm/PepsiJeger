@@ -116,7 +116,29 @@
       return tekst ? JSON.parse(tekst) : null;
     }
 
-    // --- Ordmatching ---
+    // Normaliser kjedene slik at f.eks. "EUROSPAR Hareid" og "Spar" matcher perfekt
+    function normaliserKjede(tekst) {
+      const t = (tekst || '').toUpperCase();
+      if (t.includes('EXTRA')) return 'EXTRA';
+      if (t.includes('BUNNPRIS')) return 'BUNNPRIS';
+      if (t.includes('SPAR') || t.includes('EUROSPAR')) return 'SPAR';
+      if (t.includes('REMA')) return 'REMA';
+      if (t.includes('KIWI')) return 'KIWI';
+      if (t.includes('PRIX')) return 'PRIX';
+      if (t.includes('MEGA')) return 'MEGA';
+      if (t.includes('MENY')) return 'MENY';
+      if (t.includes('JOKER')) return 'JOKER';
+      if (t.includes('OBS')) return 'OBS';
+      return t;
+    }
+
+    function erPepsiFlerpakning(produktNavn) {
+      const p = (produktNavn || '').toLowerCase().replace(/\s+/g, '');
+      const er4 = /(4x1[,.]5|4[-]?pk.*1[,.]5|1[,.]5.*4[-]?pk|4stk.*1[,.]5)/i.test(p);
+      const er6 = /(6x1[,.]5|6[-]?pk.*1[,.]5|1[,.]5.*6[-]?pk|6stk.*1[,.]5)/i.test(p);
+      return er4 || er6;
+    }
+
     function matcherSoekeord(produktNavn, query) {
       const q = query.trim().toLowerCase();
       const p = (produktNavn || '').toLowerCase();
@@ -133,28 +155,6 @@
         if (ord.startsWith(q) && ord.length >= q.length + 2) return true;
       }
       return false;
-    }
-
-    // Sjekker om et Pepsi-produkt er en 4-pk eller 6-pk 1,5L
-    function erPepsiFlerpakning(produktNavn) {
-      const p = (produktNavn || '').toLowerCase().replace(/\s+/g, '');
-      const er4 = /(4x1[,.]5|4[-]?pk.*1[,.]5|1[,.]5.*4[-]?pk)/i.test(p);
-      const er6 = /(6x1[,.]5|6[-]?pk.*1[,.]5|1[,.]5.*6[-]?pk)/i.test(p);
-      return er4 || er6;
-    }
-
-    // Ekstraherer kjerne-kjedenavn (f.eks. "Extra Hareid" -> "EXTRA", "EUROSPAR Hareid" -> "SPAR")
-    function finnKjerneKjede(navn) {
-      const n = (navn || '').toUpperCase();
-      if (n.includes('EXTRA') || n.includes('COOP EXTRA')) return 'EXTRA';
-      if (n.includes('BUNNPRIS')) return 'BUNNPRIS';
-      if (n.includes('SPAR') || n.includes('EUROSPAR')) return 'SPAR';
-      if (n.includes('REMA')) return 'REMA 1000';
-      if (n.includes('KIWI')) return 'KIWI';
-      if (n.includes('PRIX') || n.includes('COOP PRIX')) return 'COOP PRIX';
-      if (n.includes('MEGA') || n.includes('COOP MEGA')) return 'COOP MEGA';
-      if (n.includes('MENY')) return 'MENY';
-      return n.split(' ')[0];
     }
 
     // --- Butikksøk mot Kassal Physical Stores API ---
@@ -187,10 +187,11 @@
             const navn = s.name || s.name_full || "Butikk";
             const adresse = s.address ? ` (${s.address})` : '';
             const renTekst = navn.replace(/'/g, "\\'");
+            const kjede = s.group || s.brand || normaliserKjede(navn);
             container.innerHTML += `
               <div class="store-search-result">
                 <span>📍 <strong>${navn}</strong>${adresse}</span>
-                <button class="add-store-btn" onclick="leggTilButikk('${s.id || ''}', '${renTekst}', '${(s.group || s.brand || '').replace(/'/g, "\\'")}')">+ Legg til</button>
+                <button class="add-store-btn" onclick="leggTilButikk('${s.id || ''}', '${renTekst}', '${kjede.replace(/'/g, "\\'")}')">+ Legg til</button>
               </div>
             `;
           });
@@ -404,7 +405,7 @@
       }
     }
 
-    function filtrerKassalProdukter(produkter, query, erEan = false) {
+    function filtrerKassalProdukter(produkter, query, krevFlerpakning = false) {
       return (produkter || []).filter(item => {
         const vareNavn = (item.name || '').trim();
         const pris = Number(item.current_price ?? item.price ?? 0);
@@ -413,29 +414,35 @@
           return false;
         }
 
-        // Butikksjekk mot dine valgte butikker
+        // Butikksjekk
         if (mineValgteButikker.length > 0) {
-          const itemStoreNavn = (item.store?.name || '').toUpperCase();
-          const matcherButikk = mineValgteButikker.some(b => {
-            const minStoreNavn = (b.store_name || '').toUpperCase();
-            const minKjede = finnKjerneKjede(b.store_name);
+          const itemButikkNavn = typeof item.store === 'string' 
+            ? item.store 
+            : (item.store?.name || item.brand || '');
+          
+          const itemKjedeKjerne = normaliserKjede(itemButikkNavn);
 
+          const matcherButikk = mineValgteButikker.some(b => {
+            const minKjedeKjerne = normaliserKjede(b.chain_name || b.store_name);
+            const minButikkNavn = (b.store_name || '').toUpperCase();
+            const raaItemNavn = itemButikkNavn.toUpperCase();
+
+            // Matcher enten på normalisert kjede (f.eks. SPAR mot EUROSPAR) eller direkte navnelikhet
             return (
-              itemStoreNavn.includes(minStoreNavn) ||
-              minStoreNavn.includes(itemStoreNavn) ||
-              itemStoreNavn.includes(minKjede) ||
-              minKjede.includes(itemStoreNavn)
+              (itemKjedeKjerne && minKjedeKjerne && itemKjedeKjerne === minKjedeKjerne) ||
+              raaItemNavn.includes(minButikkNavn) ||
+              minButikkNavn.includes(raaItemNavn)
             );
           });
+
           if (!matcherButikk) return false;
         }
 
-        // Hvis det er et generelt Pepsi-søk: tillat kun 4-pk eller 6-pk 1,5L
-        if (!erEan && query.toLowerCase().includes('pepsi')) {
+        if (krevFlerpakning) {
           return erPepsiFlerpakning(vareNavn);
         }
 
-        if (!erEan && !matcherSoekeord(vareNavn, query)) {
+        if (query && !matcherSoekeord(vareNavn, query)) {
           return false;
         }
 
@@ -443,7 +450,7 @@
       });
     }
 
-    // --- Oppdater-knappen for Dagens Funn ---
+    // --- Oppdater Dagens Funn ---
     async function oppdaterOgSynkLive() {
       const container = document.getElementById('deal-list');
       container.innerHTML = '<p class="status-text">Henter ferske tilbud fra Kassal...</p>';
@@ -459,32 +466,33 @@
           alleFunn = alleFunn.concat(filtrert);
         }
 
-        // 2. Fritext-søk etter Pepsi Max (sikrer treff fra kjeder som ikke mapper EAN-underpriser)
-        const pepsiFritekst = await hentFraKassal("pepsi max");
-        const filtrertPepsi = filtrerKassalProdukter(pepsiFritekst, "pepsi max", false);
-        alleFunn = alleFunn.concat(filtrertPepsi);
+        // 2. Målrettede søk for å fange opp 4-pk og 6-pk fra Spar, Extra og Bunnpris
+        const sokOrdListe = ["pepsi max 6", "pepsi max 4", "pepsi 6 x", "pepsi max 1,5"];
+        for (const soek of sokOrdListe) {
+          const raaData = await hentFraKassal(soek);
+          const filtrert = filtrerKassalProdukter(raaData, "", true);
+          alleFunn = alleFunn.concat(filtrert);
+        }
 
-        // 3. Søk etter øvrige overvåkede varer fra databasen
+        // 3. Hent øvrige varer som overvåkes fra listen
         const varer = await apiKall('watched_items?select=query', { prefer: 'return=representation' });
         if (varer && varer.length > 0) {
           for (const v of varer) {
             if (v.query.toLowerCase().includes('pepsi')) continue;
 
-            try {
-              const raaData = await hentFraKassal(v.query);
-              const filtrert = filtrerKassalProdukter(raaData, v.query, false);
-              alleFunn = alleFunn.concat(filtrert);
-            } catch (e) {
-              console.warn(e);
-            }
+            const raaData = await hentFraKassal(v.query);
+            const filtrert = filtrerKassalProdukter(raaData, v.query, false);
+            alleFunn = alleFunn.concat(filtrert);
           }
         }
 
-        // Fjern eventuelle duplikater basert på butikk og navn
+        // Fjern duplikater
         const unikeFunn = [];
         const sett = new Set();
         for (const item of alleFunn) {
-          const nøkkel = `${(item.store?.name || '').trim().toLowerCase()}_${item.name.trim().toLowerCase()}_${item.current_price ?? item.price}`;
+          const butikkNavn = typeof item.store === 'string' ? item.store : (item.store?.name || 'Butikk');
+          const pris = Number(item.current_price ?? item.price ?? 0);
+          const nøkkel = `${normaliserKjede(butikkNavn)}_${item.name.trim().toLowerCase()}_${pris}`;
           if (!sett.has(nøkkel)) {
             sett.add(nøkkel);
             unikeFunn.push(item);
@@ -505,7 +513,7 @@
 
         container.innerHTML = "";
         unikeFunn.forEach(item => {
-          const butikk = item.store?.name || "Butikk";
+          const butikk = typeof item.store === 'string' ? item.store : (item.store?.name || "Butikk");
           const pris = item.current_price ?? item.price ?? 0;
           container.innerHTML += `
             <div class="deal-item">
